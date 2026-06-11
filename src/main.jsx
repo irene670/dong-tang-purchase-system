@@ -5,6 +5,7 @@ import {
   PackageCheck, Truck, ClipboardCheck, FileDown, LogOut, UserRound,
   RefreshCw, CheckCircle2, Clock3, Menu, Megaphone, Store, CalendarDays,
   LayoutDashboard, Save, Image
+  , Warehouse, FileText, History, SlidersHorizontal, Upload
 } from "lucide-react";
 import "./styles.css";
 
@@ -62,10 +63,30 @@ const defaultBadges = {
 };
 
 const defaultChannels = {
-  "好日子設計有限公司": { discount: 65, hideDealerPrice: false },
-  "誠品生活": { discount: 60, hideDealerPrice: false },
-  "測試通路": { discount: 70, hideDealerPrice: true }
+  "好日子設計有限公司": { mode: "consignment", discount: 65, hideDealerPrice: false },
+  "誠品生活": { mode: "buyout", discount: 60, hideDealerPrice: false },
+  "測試通路": { mode: "consignment", discount: 70, hideDealerPrice: true }
 };
+
+function loadChannels() {
+  const stored = JSON.parse(localStorage.getItem("dt-channels") || "null") || defaultChannels;
+  return Object.fromEntries(Object.entries(stored).map(([name, value]) => [name, {
+    mode: value.mode || defaultChannels[name]?.mode || "buyout",
+    discount: value.discount ?? 100,
+    hideDealerPrice: Boolean(value.hideDealerPrice)
+  }]));
+}
+
+const defaultMovements = [
+  { id: "MV-001", date: "2026/05/20", company: "好日子設計有限公司", productId: 92725, type: "採購單入庫", qty: 30, before: 0, after: 30, source: "DT-20260520-006", operator: "admin", note: "首批寄售入庫" },
+  { id: "MV-002", date: "2026/05/31", company: "好日子設計有限公司", productId: 92725, type: "銷貨單扣庫存", qty: -8, before: 30, after: 22, source: "SO-202605-001", operator: "admin", note: "五月銷貨" },
+  { id: "MV-003", date: "2026/06/02", company: "好日子設計有限公司", productId: 92715, type: "採購單入庫", qty: 20, before: 0, after: 20, source: "DT-20260602-011", operator: "admin", note: "" },
+  { id: "MV-004", date: "2026/06/08", company: "好日子設計有限公司", productId: 78366, type: "採購單入庫", qty: 12, before: 0, after: 12, source: "DT-20260608-018", operator: "admin", note: "" }
+];
+
+const defaultSales = [
+  { id: "SO-202605-001", company: "好日子設計有限公司", month: "2026-05", date: "2026-05-31", status: "已確認", note: "五月銷售回報", attachment: "好日子_2026年05月銷貨單.pdf", items: [{ productId: 92725, qty: 8, price: 377 }] }
+];
 
 function historyKey(company) {
   return `dt-history-${encodeURIComponent(company || "")}`;
@@ -94,6 +115,26 @@ async function fetchProducts() {
   }
 }
 
+async function postScript(payload) {
+  if (!SCRIPT_URL) return null;
+  const response = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify(payload) });
+  const result = await response.json();
+  if (!result.ok) throw new Error(result.error || "資料同步失敗");
+  return result;
+}
+
+async function uploadSalesFile(file) {
+  if (!file || !SCRIPT_URL) return file?.name || "";
+  const base64 = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result).split(",")[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+  const result = await postScript({ action: "uploadAttachment", name: file.name, mimeType: file.type, base64 });
+  return result.url;
+}
+
 const money = n => `NT$ ${Number(n).toLocaleString("zh-TW")}`;
 const discountLabel = value => `${Number(value) / 10} 折`;
 
@@ -103,7 +144,9 @@ function App() {
   const [products, setProducts] = useState(fallbackProducts);
   const [content, setContent] = useState(() => JSON.parse(localStorage.getItem("dt-content") || "null") || defaultContent);
   const [productEdits, setProductEdits] = useState(() => JSON.parse(localStorage.getItem("dt-products") || "{}"));
-  const [channels, setChannels] = useState(() => JSON.parse(localStorage.getItem("dt-channels") || "null") || defaultChannels);
+  const [channels, setChannels] = useState(loadChannels);
+  const [movements, setMovements] = useState(() => JSON.parse(localStorage.getItem("dt-movements") || "null") || defaultMovements);
+  const [sales, setSales] = useState(() => JSON.parse(localStorage.getItem("dt-sales") || "null") || defaultSales);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("常用採購");
@@ -134,6 +177,9 @@ function App() {
   );
   const totalQty = cart.reduce((sum, x) => sum + x.qty, 0);
   const dealerPrice = price => Math.round(price * channelSettings.discount / 100);
+  const inventoryFor = (company, productId) => movements
+    .filter(m => m.company === company && Number(m.productId) === Number(productId))
+    .reduce((sum, m) => sum + Number(m.qty), 0);
   const subtotal = cart.reduce((sum, x) => sum + dealerPrice(x.price) * x.qty, 0);
 
   function notify(message) {
@@ -221,6 +267,13 @@ function App() {
     notify("前台內容已儲存");
   }
 
+  function saveInventory(nextMovements, nextSales) {
+    setMovements(nextMovements);
+    setSales(nextSales);
+    localStorage.setItem("dt-movements", JSON.stringify(nextMovements));
+    localStorage.setItem("dt-sales", JSON.stringify(nextSales));
+  }
+
   if (!user) return <Login onLogin={login} />;
 
   return (
@@ -268,6 +321,7 @@ function App() {
                     <div className="row-name">
                       <div className="product-title-line"><strong>{product.name}</strong><ProductBadges badges={product.badges} /></div>
                       <small>品號 {product.sku}{category === "常用採購" && ` · 歷史採購 ${purchaseHistory[product.id].orderCount} 次／${purchaseHistory[product.id].totalQty} 件`}</small>
+                      {channelSettings.mode === "consignment" && <span className={`stock-balance ${inventoryFor(user.company, product.id) <= 5 ? "low" : ""}`}><Warehouse /> 寄售庫存 {inventoryFor(user.company, product.id)} 件</span>}
                     </div>
                     <span className="row-category">{product.category}</span>
                     <div className="row-price">
@@ -287,7 +341,7 @@ function App() {
             <PurchaseList items={cart} subtotal={subtotal} totalQty={totalQty} dealerPrice={dealerPrice} settings={channelSettings} onQty={changeQty} onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
           </section>
         </main>
-      ) : view === "orders" ? <Orders orders={demoOrders} /> : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels} onSave={saveAdmin} />}
+      ) : view === "orders" ? <Orders orders={demoOrders} /> : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels} movements={movements} sales={sales} onSave={saveAdmin} onSaveInventory={saveInventory} />}
 
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
     </div>
@@ -341,7 +395,7 @@ function PartnerHome({ content, products, onShop }) {
   </main>;
 }
 
-function AdminPanel({ content, products, productEdits, channels, onSave }) {
+function AdminPanel({ content, products, productEdits, channels, movements, sales, onSave, onSaveInventory }) {
   const [tab, setTab] = useState("home");
   const [draft, setDraft] = useState(content);
   const [edits, setEdits] = useState(productEdits);
@@ -355,7 +409,7 @@ function AdminPanel({ content, products, productEdits, channels, onSave }) {
     <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">目前資料儲存在這台裝置的瀏覽器中。正式多人管理時，建議改接 Google Sheets 或後端資料庫。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><UserRound /> 通路折數</button></aside>
+      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><UserRound /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
       <section className="admin-content">
         {tab === "home" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
@@ -391,7 +445,7 @@ function AdminPanel({ content, products, productEdits, channels, onSave }) {
               <input type="number" value={value.price} onChange={e => updateProduct(product, "price", Number(e.target.value))} />
             </div>;
           })}
-        </div> : <ChannelManager channels={channelDraft} onChange={setChannelDraft} />}
+        </div> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
@@ -416,18 +470,105 @@ function ChannelManager({ channels, onChange }) {
   function addChannel() {
     const name = newName.trim();
     if (!name || channels[name]) return;
-    onChange({ ...channels, [name]: { discount: 70, hideDealerPrice: false } });
+    onChange({ ...channels, [name]: { mode: "buyout", discount: 70, hideDealerPrice: false } });
     setNewName("");
   }
   return <div className="channel-manager">
     <div className="add-channel"><input value={newName} onChange={e => setNewName(e.target.value)} placeholder="輸入新通路公司名稱" /><button onClick={addChannel}><Plus /> 新增通路</button></div>
-    <div className="channel-head"><span>通路帳號／公司</span><span>經銷折數</span><span>價格顯示</span></div>
+    <div className="channel-head"><span>通路帳號／公司</span><span>經銷模式</span><span>經銷折數</span><span>價格顯示</span></div>
     {Object.entries(channels).map(([name, value]) => <div className="channel-row" key={name}>
       <strong>{name}</strong>
+      <select value={value.mode || "buyout"} onChange={e => update(name, "mode", e.target.value)}><option value="buyout">買斷</option><option value="consignment">寄售</option></select>
       <label><input type="number" min="1" max="100" value={value.discount} onChange={e => update(name, "discount", Math.min(100, Math.max(1, Number(e.target.value))))} /><span>%</span><small>{discountLabel(value.discount)} = 零售價 × {(value.discount / 100).toFixed(2)}</small></label>
       <label className="hide-price"><input type="checkbox" checked={value.hideDealerPrice} onChange={e => update(name, "hideDealerPrice", e.target.checked)} /><span>不顯示經銷價</span></label>
     </div>)}
   </div>;
+}
+
+const stockOf = (movements, company, productId) => movements.filter(m => m.company === company && Number(m.productId) === Number(productId)).reduce((sum, m) => sum + Number(m.qty), 0);
+const today = () => new Date().toISOString().slice(0, 10).replaceAll("-", "/");
+
+function InventoryOverview({ channels, products, movements }) {
+  const consignments = Object.entries(channels).filter(([, value]) => value.mode === "consignment");
+  const [company, setCompany] = useState(consignments[0]?.[0] || "");
+  const [query, setQuery] = useState("");
+  const rows = products.filter(p => stockOf(movements, company, p.id) !== 0 && `${p.name} ${p.sku} ${p.category}`.toLowerCase().includes(query.toLowerCase()));
+  return <div className="inventory-admin">
+    <div className="inventory-tools"><select value={company} onChange={e => setCompany(e.target.value)}>{consignments.map(([name]) => <option key={name}>{name}</option>)}</select><div className="search"><Search /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋商品、SKU、分類" /></div></div>
+    <div className="inventory-summary"><div><span>寄售品項</span><strong>{rows.length}</strong></div><div><span>庫存總件數</span><strong>{rows.reduce((s, p) => s + stockOf(movements, company, p.id), 0)}</strong></div><div><span>低庫存品項</span><strong>{rows.filter(p => stockOf(movements, company, p.id) <= 5).length}</strong></div></div>
+    <div className="inventory-table table-scroll"><div className="inventory-head"><span>SKU</span><span>商品名稱</span><span>分類</span><span>目前庫存</span><span>最近異動</span></div>{rows.map(p => {
+      const related = movements.filter(m => m.company === company && Number(m.productId) === Number(p.id));
+      return <div className="inventory-row" key={p.id}><span>{p.sku}</span><strong>{p.name}</strong><span>{p.category}</span><b className={stockOf(movements, company, p.id) <= 5 ? "low" : ""}>{stockOf(movements, company, p.id)} 件</b><span>{related.at(-1)?.date || "-"}</span></div>;
+    })}</div>
+  </div>;
+}
+
+function SalesManager({ channels, products, movements, sales, onSave }) {
+  const companies = Object.entries(channels).filter(([, value]) => value.mode === "consignment").map(([name]) => name);
+  const [form, setForm] = useState({ company: companies[0] || "", month: "2026-06", date: "2026-06-30", productId: products[0]?.id, qty: 1, note: "", attachment: "", file: null });
+  const [uploading, setUploading] = useState(false);
+  async function createDraft() {
+    const product = products.find(p => Number(p.id) === Number(form.productId));
+    const discount = channels[form.company]?.discount || 100;
+    setUploading(true);
+    let attachment = form.attachment;
+    try { attachment = await uploadSalesFile(form.file); } catch { attachment = form.file?.name || ""; }
+    const doc = { id: `SO-${Date.now()}`, company: form.company, month: form.month, date: form.date, status: "草稿", note: form.note, attachment, items: [{ productId: Number(form.productId), sku: product.sku, name: product.name, qty: Number(form.qty), price: Math.round(product.price * discount / 100) }] };
+    onSave(movements, [doc, ...sales]);
+    postScript({ action: "saveSales", ...doc }).catch(() => {});
+    setUploading(false);
+  }
+  function changeStatus(doc, status) {
+    let nextMovements = [...movements];
+    const applied = nextMovements.some(m => m.source === doc.id && m.type === "銷貨單扣庫存");
+    const reversed = nextMovements.some(m => m.source === `${doc.id}-VOID`);
+    if ((status === "已確認" || status === "已請款") && !applied) {
+      doc.items.forEach((item, index) => {
+        const before = stockOf(nextMovements, doc.company, item.productId);
+        nextMovements.push({ id: `MV-${Date.now()}-${index}`, date: doc.date.replaceAll("-", "/"), company: doc.company, productId: item.productId, type: "銷貨單扣庫存", qty: -item.qty, before, after: before - item.qty, source: doc.id, operator: "admin", note: doc.note });
+      });
+    }
+    if (status === "已作廢" && applied && !reversed) {
+      doc.items.forEach((item, index) => {
+        const before = stockOf(nextMovements, doc.company, item.productId);
+        nextMovements.push({ id: `MV-${Date.now()}-V${index}`, date: today(), company: doc.company, productId: item.productId, type: "銷貨單作廢回沖", qty: item.qty, before, after: before + item.qty, source: `${doc.id}-VOID`, operator: "admin", note: "作廢回沖" });
+      });
+    }
+    onSave(nextMovements, sales.map(s => s.id === doc.id ? { ...s, status } : s));
+    postScript({ action: "saveSales", ...doc, status }).catch(() => {});
+  }
+  return <div className="sales-admin">
+    <div className="sales-form">
+      <select value={form.company} onChange={e => setForm({ ...form, company: e.target.value })}>{companies.map(c => <option key={c}>{c}</option>)}</select>
+      <input type="month" value={form.month} onChange={e => setForm({ ...form, month: e.target.value })} />
+      <input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
+      <select value={form.productId} onChange={e => setForm({ ...form, productId: e.target.value })}>{products.map(p => <option key={p.id} value={p.id}>{p.sku}｜{p.name}</option>)}</select>
+      <input type="number" min="1" value={form.qty} onChange={e => setForm({ ...form, qty: e.target.value })} placeholder="售出數量" />
+      <label className="upload-field"><Upload /> {form.file?.name || "上傳原始銷貨單"}<input type="file" accept=".pdf,.jpg,.jpeg,.png,.xlsx,.xls" onChange={e => setForm({ ...form, file: e.target.files?.[0] || null })} /></label>
+      <input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="備註" />
+      <button disabled={uploading} onClick={createDraft}><Plus /> {uploading ? "上傳中..." : "建立草稿"}</button>
+    </div>
+    <div className="sales-list table-scroll"><div className="sales-head"><span>銷貨單號</span><span>經銷商／月份</span><span>明細</span><span>總金額</span><span>附件</span><span>狀態</span></div>{sales.map(doc => <div className="sales-row" key={doc.id}><strong>{doc.id}</strong><span>{doc.company}<small>{doc.month}</small></span><span>{doc.items.reduce((s, i) => s + i.qty, 0)} 件</span><strong>{money(doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><span>{doc.attachment || "-"}</span><select value={doc.status} onChange={e => changeStatus(doc, e.target.value)}><option>草稿</option><option>已確認</option><option>已請款</option><option>已作廢</option></select></div>)}</div>
+  </div>;
+}
+
+function StockAdjustment({ channels, products, movements, sales, onSave }) {
+  const companies = Object.entries(channels).filter(([, value]) => value.mode === "consignment").map(([name]) => name);
+  const [form, setForm] = useState({ company: companies[0] || "", productId: products[0]?.id, mode: "delta", value: 0, reason: "盤點差異", note: "" });
+  const current = stockOf(movements, form.company, form.productId);
+  function submit() {
+    const qty = form.mode === "set" ? Number(form.value) - current : Number(form.value);
+    if (!qty) return;
+    const movement = { id: `MV-${Date.now()}`, date: today(), company: form.company, productId: Number(form.productId), type: form.mode === "set" ? "盤點設定" : "手動庫存調整", qty, before: current, after: current + qty, source: `ADJ-${Date.now()}`, operator: "admin", note: `${form.reason}${form.note ? `｜${form.note}` : ""}` };
+    onSave([...movements, movement], sales);
+    setForm({ ...form, value: 0, note: "" });
+  }
+  return <div className="adjust-admin"><div className="adjust-card"><h2>庫存盤點／手動修正</h2><select value={form.company} onChange={e => setForm({ ...form, company: e.target.value })}>{companies.map(c => <option key={c}>{c}</option>)}</select><select value={form.productId} onChange={e => setForm({ ...form, productId: e.target.value })}>{products.map(p => <option key={p.id} value={p.id}>{p.sku}｜{p.name}</option>)}</select><div className="current-stock">系統目前庫存 <strong>{current} 件</strong></div><select value={form.mode} onChange={e => setForm({ ...form, mode: e.target.value })}><option value="delta">新增調整數量（+/-）</option><option value="set">直接設定實際庫存</option></select><input type="number" value={form.value} onChange={e => setForm({ ...form, value: e.target.value })} /><select value={form.reason} onChange={e => setForm({ ...form, reason: e.target.value })}><option>盤點差異</option><option>盤損</option><option>補登</option><option>退貨</option><option>其他調整</option></select><textarea value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="備註" /><button className="primary" onClick={submit}>確認調整</button></div></div>;
+}
+
+function MovementHistory({ products, movements }) {
+  const productMap = Object.fromEntries(products.map(p => [p.id, p]));
+  return <div className="movement-list table-scroll"><div className="movement-head"><span>日期</span><span>經銷商</span><span>商品</span><span>異動類型</span><span>數量</span><span>異動前／後</span><span>來源單號</span><span>操作者／備註</span></div>{[...movements].reverse().map(m => <div className="movement-row" key={m.id}><span>{m.date}</span><span>{m.company}</span><span>{productMap[m.productId]?.name || m.productId}</span><span>{m.type}</span><b className={m.qty < 0 ? "negative" : "positive"}>{m.qty > 0 ? "+" : ""}{m.qty}</b><span>{m.before} → {m.after}</span><span>{m.source}</span><span>{m.operator}<small>{m.note}</small></span></div>)}</div>;
 }
 
 function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, onQty, onRemove, onCheckout }) {
