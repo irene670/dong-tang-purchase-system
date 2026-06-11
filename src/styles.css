@@ -231,6 +231,11 @@
 .document-tabs button.active{background:var(--green);border-color:var(--green);color:#fff}
 .document-list{margin-top:0;background:#fff;padding:28px}
 .document-list>h2{font-family:"Shippori Mincho";margin-top:0}
+.document-list-heading{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:20px}
+.document-list-heading h2{font-family:"Shippori Mincho";margin:0 0 6px}
+.document-list-heading p{margin:0;color:#7d8582;font-size:12px}
+.document-list-heading>span{display:flex;align-items:center;gap:5px;background:#e8f3ee;color:#287157;padding:7px 10px;font-size:10px;font-weight:700}
+.document-list-heading svg{width:14px}
 .customer-sales article{display:grid;grid-template-columns:minmax(220px,1fr) 130px minmax(300px,1.2fr);align-items:center;gap:20px;border-bottom:1px solid var(--line);padding:20px 5px}
 .customer-sales article>div:first-child strong,.customer-sales article>div:first-child small{display:block}
 .customer-sales article>div:first-child .status{display:inline-flex;margin-bottom:8px}
