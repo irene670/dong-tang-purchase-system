@@ -658,6 +658,7 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, onQty,
     <div className="list-head"><div><span className="eyebrow">CURRENT ORDER</span><h2>本次採購清單</h2></div><b>{items.length} 項／{totalQty} 件</b></div>
     <div className="list-items">{!items.length ? <div className="empty"><ShoppingBag /><h3>尚未選擇商品</h3><p>在左側輸入數量，商品會立即出現在這裡。</p></div> : items.map(item =>
       <div className="list-item" key={item.id}>
+        <img className="list-item-image" src={item.image} alt={item.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
         <div><strong>{item.name}</strong><small>{item.sku} · 零售價 {money(item.price)}{!settings.hideDealerPrice && ` · 經銷價 ${money(dealerPrice(item.price))}`}</small></div>
         <div className="qty"><button onClick={() => onQty(item.id, -1)}><Minus /></button><span>{item.qty}</span><button onClick={() => onQty(item.id, 1)}><Plus /></button></div>
         <strong>{settings.hideDealerPrice ? `${item.qty} 件` : money(dealerPrice(item.price) * item.qty)}</strong>
