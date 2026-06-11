@@ -39,6 +39,17 @@ const defaultContent = {
   displayText: "需要桌上型展示架、商品立牌或陳列建議？送出需求後將由業務專人聯繫。"
 };
 
+const demoFrequent = {
+  92725: { orderCount: 8, totalQty: 96 },
+  92715: { orderCount: 6, totalQty: 72 },
+  78366: { orderCount: 5, totalQty: 48 },
+  80776: { orderCount: 3, totalQty: 24 }
+};
+
+function historyKey(company) {
+  return `dt-history-${encodeURIComponent(company || "")}`;
+}
+
 function stripHtml(value = "") {
   const doc = new DOMParser().parseFromString(value, "text/html");
   return doc.body.textContent || "";
@@ -72,20 +83,25 @@ function App() {
   const [productEdits, setProductEdits] = useState(() => JSON.parse(localStorage.getItem("dt-products") || "{}"));
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("全部商品");
+  const [category, setCategory] = useState("常用採購");
   const [cart, setCart] = useState([]);
   const [view, setView] = useState("home");
   const [toast, setToast] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
+  const [purchaseHistory, setPurchaseHistory] = useState({});
 
   useEffect(() => {
     fetchProducts().then(data => { setProducts(data); setLoading(false); });
   }, []);
 
-  const categories = useMemo(() => ["全部商品", ...new Set(products.map(p => p.category))], [products]);
   const managedProducts = products.map(p => ({ ...p, ...(productEdits[p.id] || {}) })).filter(p => p.visible !== false);
-  const shown = managedProducts.filter(p =>
-    (category === "全部商品" || p.category === category) &&
+  const frequentProducts = managedProducts
+    .filter(p => purchaseHistory[p.id])
+    .sort((a, b) => purchaseHistory[b.id].orderCount - purchaseHistory[a.id].orderCount);
+  const categories = useMemo(() => ["常用採購", "全部商品", ...new Set(managedProducts.map(p => p.category))], [managedProducts]);
+  const categoryProducts = category === "常用採購" ? frequentProducts : managedProducts;
+  const shown = categoryProducts.filter(p =>
+    (category === "常用採購" || category === "全部商品" || p.category === category) &&
     p.name.toLowerCase().includes(query.toLowerCase())
   );
   const totalQty = cart.reduce((sum, x) => sum + x.qty, 0);
@@ -130,6 +146,16 @@ function App() {
       const res = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify(order) });
       const result = await res.json();
       if (!result.ok) throw new Error(result.error || "送單失敗");
+      const nextHistory = { ...purchaseHistory };
+      cart.forEach(item => {
+        const previous = nextHistory[item.id] || { orderCount: 0, totalQty: 0 };
+        nextHistory[item.id] = {
+          orderCount: previous.orderCount + 1,
+          totalQty: previous.totalQty + item.qty
+        };
+      });
+      setPurchaseHistory(nextHistory);
+      localStorage.setItem(historyKey(user.company), JSON.stringify(nextHistory));
       notify(`訂單 ${result.orderNo} 已成功送出`);
       setCart([]);
       setView("orders");
@@ -145,7 +171,14 @@ function App() {
       setView("admin");
       return;
     }
+    const storedHistory = JSON.parse(localStorage.getItem(historyKey(credentials.company)) || "null");
+    const initialHistory = storedHistory || (credentials.company === "好日子設計有限公司" ? demoFrequent : {});
+    setPurchaseHistory(initialHistory);
+    if (!storedHistory && credentials.company === "好日子設計有限公司") {
+      localStorage.setItem(historyKey(credentials.company), JSON.stringify(initialHistory));
+    }
     setUser({ company: credentials.company, name: credentials.name });
+    setCategory("常用採購");
     setView("home");
   }
 
@@ -190,7 +223,7 @@ function App() {
             <div className="product-browser">
               <div className="browser-tools">
                 <div className="search"><Search size={19} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋品名、品號" /></div>
-                <span>共 {shown.length} 項商品</span>
+                <span>{category === "常用採購" ? `依歷史紀錄找到 ${shown.length} 項常購商品` : `共 ${shown.length} 項商品`}</span>
               </div>
             <div className="category-row">
               {categories.map(c => <button key={c} onClick={() => setCategory(c)} className={category === c ? "active" : ""}>{c}</button>)}
@@ -198,10 +231,10 @@ function App() {
             {loading ? <div className="loading"><RefreshCw /> 正在同步官網商品...</div> : (
               <div className="product-table">
                 <div className="product-table-head"><span>商品</span><span>品名／品號</span><span>分類</span><span>單價</span><span>採購數量</span></div>
-                {shown.map(product => (
+                {category === "常用採購" && shown.length === 0 ? <div className="frequent-empty"><Clock3 /><h3>目前還沒有歷史採購品項</h3><p>完成第一筆訂單後，曾採購的商品會自動整理到這裡。</p><button onClick={() => setCategory("全部商品")}>瀏覽全部商品</button></div> : shown.map(product => (
                   <article className={`product-row ${cart.some(x => x.id === product.id) ? "selected" : ""}`} key={product.id}>
                     <img src={product.image} alt={product.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
-                    <div className="row-name"><strong>{product.name}</strong><small>品號 {product.sku}</small></div>
+                    <div className="row-name"><strong>{product.name}</strong><small>品號 {product.sku}{category === "常用採購" && ` · 歷史採購 ${purchaseHistory[product.id].orderCount} 次／${purchaseHistory[product.id].totalQty} 件`}</small></div>
                     <span className="row-category">{product.category}</span>
                     <strong className="row-price">{money(product.price)}</strong>
                     <div className="row-qty">
