@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
-  Search, ShoppingBag, Plus, Minus, Trash2, X, ChevronRight,
+  Search, ShoppingBag, Plus, Minus, Trash2, ChevronRight,
   PackageCheck, Truck, ClipboardCheck, FileDown, LogOut, UserRound,
   RefreshCw, CheckCircle2, Clock3, Menu
 } from "lucide-react";
@@ -56,7 +56,6 @@ function App() {
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("全部商品");
   const [cart, setCart] = useState([]);
-  const [cartOpen, setCartOpen] = useState(false);
   const [view, setView] = useState("shop");
   const [toast, setToast] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
@@ -90,6 +89,17 @@ function App() {
     setCart(prev => prev.map(x => x.id === id ? { ...x, qty: Math.max(1, x.qty + delta) } : x));
   }
 
+  function setQty(product, value) {
+    const qty = Math.max(0, Number(value) || 0);
+    setCart(prev => {
+      const found = prev.find(x => x.id === product.id);
+      if (qty === 0) return prev.filter(x => x.id !== product.id);
+      return found
+        ? prev.map(x => x.id === product.id ? { ...x, qty } : x)
+        : [...prev, { ...product, qty }];
+    });
+  }
+
   async function checkout() {
     if (!cart.length) return;
     const order = { company: user.company, contact: user.name, total: subtotal, items: cart, createdAt: new Date().toISOString() };
@@ -103,7 +113,6 @@ function App() {
       if (!result.ok) throw new Error(result.error || "送單失敗");
       notify(`訂單 ${result.orderNo} 已成功送出`);
       setCart([]);
-      setCartOpen(false);
       setView("orders");
     } catch {
       notify("訂單送出失敗，採購清單已為您保留");
@@ -132,64 +141,44 @@ function App() {
       </header>
 
       {view === "shop" ? (
-        <main>
-          <section className="hero">
-            <div>
-              <span className="eyebrow">2026 BUSINESS CATALOG</span>
-              <h1>採購，<br /><em>快一點。</em></h1>
-              <p>從東瑭全系列商品中快速選購，送出後即時掌握備貨與出貨進度。</p>
-              <div className="hero-actions">
-                <button className="primary" onClick={() => document.querySelector(".catalog").scrollIntoView({ behavior: "smooth" })}>開始採購 <ChevronRight /></button>
-                <span><CheckCircle2 /> 官網商品即時同步</span>
+        <main className="purchase-page">
+          <section className="purchase-heading">
+            <div><span className="eyebrow">B2B QUICK ORDER</span><h1>快速採購單</h1><p>搜尋商品並直接填寫數量，右側清單會同步更新。</p></div>
+            <div className="sync-state"><CheckCircle2 /> 官網商品已同步</div>
+          </section>
+          <section className="purchase-workspace">
+            <div className="product-browser">
+              <div className="browser-tools">
+                <div className="search"><Search size={19} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋品名、品號" /></div>
+                <span>共 {shown.length} 項商品</span>
               </div>
-            </div>
-            <div className="hero-art">
-              <span className="art-label">精選<br />木製<br />設計</span>
-              <img src={products[0]?.image} alt={products[0]?.name} />
-              <div className="floating-note"><strong>400+</strong><span>全系列商品</span></div>
-            </div>
-          </section>
-
-          <section className="benefits">
-            <div><RefreshCw /><span><strong>資料自動同步</strong><small>依 Google 商品表更新</small></span></div>
-            <div><ClipboardCheck /><span><strong>快速建立採購單</strong><small>線上送出、PDF 留存</small></span></div>
-            <div><Truck /><span><strong>透明出貨進度</strong><small>隨時查詢訂單狀態</small></span></div>
-          </section>
-
-          <section className="catalog">
-            <div className="section-title">
-              <div><span className="eyebrow">PRODUCT COLLECTION</span><h2>選擇採購商品</h2></div>
-              <div className="search"><Search size={19} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋品名或品號" /></div>
-            </div>
             <div className="category-row">
               {categories.map(c => <button key={c} onClick={() => setCategory(c)} className={category === c ? "active" : ""}>{c}</button>)}
             </div>
             {loading ? <div className="loading"><RefreshCw /> 正在同步官網商品...</div> : (
-              <div className="product-grid">
+              <div className="product-table">
+                <div className="product-table-head"><span>商品</span><span>品名／品號</span><span>分類</span><span>單價</span><span>採購數量</span></div>
                 {shown.map(product => (
-                  <article className="product-card" key={product.id}>
-                    <button className="product-image" onClick={() => add(product)}>
-                      <img src={product.image} alt={product.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
-                      <span className="quick-add"><Plus /> 快速加入</span>
-                    </button>
-                    <div className="product-info">
-                      <span className="category-tag">{product.category}</span>
-                      <h3 onClick={() => add(product)}>{product.name}</h3>
-                      <small>品號 {product.sku}</small>
-                      <div><strong>{money(product.price)}</strong><button onClick={() => add(product)} aria-label={`加入 ${product.name}`}><Plus /></button></div>
+                  <article className={`product-row ${cart.some(x => x.id === product.id) ? "selected" : ""}`} key={product.id}>
+                    <img src={product.image} alt={product.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
+                    <div className="row-name"><strong>{product.name}</strong><small>品號 {product.sku}</small></div>
+                    <span className="row-category">{product.category}</span>
+                    <strong className="row-price">{money(product.price)}</strong>
+                    <div className="row-qty">
+                      <button onClick={() => setQty(product, (cart.find(x => x.id === product.id)?.qty || 0) - 1)}><Minus /></button>
+                      <input aria-label={`${product.name} 採購數量`} type="number" min="0" value={cart.find(x => x.id === product.id)?.qty || 0} onChange={e => setQty(product, e.target.value)} />
+                      <button onClick={() => setQty(product, (cart.find(x => x.id === product.id)?.qty || 0) + 1)}><Plus /></button>
                     </div>
                   </article>
                 ))}
               </div>
             )}
+            </div>
+            <PurchaseList items={cart} subtotal={subtotal} totalQty={totalQty} onQty={changeQty} onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
           </section>
         </main>
       ) : <Orders orders={demoOrders} />}
 
-      <button className="cart-button" onClick={() => setCartOpen(true)}>
-        <ShoppingBag /><span>採購清單</span>{totalQty > 0 && <b>{totalQty}</b>}
-      </button>
-      <Cart open={cartOpen} items={cart} subtotal={subtotal} onClose={() => setCartOpen(false)} onQty={changeQty} onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
     </div>
   );
@@ -213,14 +202,23 @@ function Login({ onLogin }) {
   </div>;
 }
 
-function Cart({ open, items, subtotal, onClose, onQty, onRemove, onCheckout }) {
-  return <><div className={`overlay ${open ? "show" : ""}`} onClick={onClose} /><aside className={`cart ${open ? "open" : ""}`}>
-    <div className="cart-head"><div><span className="eyebrow">PURCHASE LIST</span><h2>採購清單 <small>{items.length} 項</small></h2></div><button onClick={onClose}><X /></button></div>
-    <div className="cart-items">{!items.length ? <div className="empty"><ShoppingBag /><h3>清單目前是空的</h3><p>點選商品圖片或「＋」即可快速加入。</p></div> : items.map(item =>
-      <div className="cart-item" key={item.id}><img src={item.image} alt="" /><div><h4>{item.name}</h4><small>品號 {item.sku}</small><strong>{money(item.price)}</strong><div className="qty"><button onClick={() => onQty(item.id, -1)}><Minus /></button><span>{item.qty}</span><button onClick={() => onQty(item.id, 1)}><Plus /></button></div></div><button className="remove" onClick={() => onRemove(item.id)}><Trash2 /></button></div>
+function PurchaseList({ items, subtotal, totalQty, onQty, onRemove, onCheckout }) {
+  return <aside className="purchase-list">
+    <div className="list-head"><div><span className="eyebrow">CURRENT ORDER</span><h2>本次採購清單</h2></div><b>{items.length} 項／{totalQty} 件</b></div>
+    <div className="list-items">{!items.length ? <div className="empty"><ShoppingBag /><h3>尚未選擇商品</h3><p>在左側輸入數量，商品會立即出現在這裡。</p></div> : items.map(item =>
+      <div className="list-item" key={item.id}>
+        <div><strong>{item.name}</strong><small>{item.sku} · {money(item.price)}</small></div>
+        <div className="qty"><button onClick={() => onQty(item.id, -1)}><Minus /></button><span>{item.qty}</span><button onClick={() => onQty(item.id, 1)}><Plus /></button></div>
+        <strong>{money(item.price * item.qty)}</strong>
+        <button className="remove" onClick={() => onRemove(item.id)}><Trash2 /></button>
+      </div>
     )}</div>
-    {items.length > 0 && <div className="cart-footer"><div className="summary"><span>商品小計</span><strong>{money(subtotal)}</strong><small>實際運費與優惠將由專人確認</small></div><button className="outline" onClick={() => window.print()}><FileDown /> 產生 PDF 採購單</button><button className="primary checkout" onClick={onCheckout}>確認送出訂單 <ChevronRight /></button></div>}
-  </aside></>;
+    <div className="list-footer">
+      <div className="summary"><span>採購總計</span><strong>{money(subtotal)}</strong><small>實際運費與優惠將由專人確認</small></div>
+      <button className="outline" disabled={!items.length} onClick={() => window.print()}><FileDown /> 產生 PDF 採購單</button>
+      <button className="primary checkout" disabled={!items.length} onClick={onCheckout}>確認送出訂單 <ChevronRight /></button>
+    </div>
+  </aside>;
 }
 
 function Orders({ orders }) {
