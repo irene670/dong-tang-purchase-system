@@ -61,6 +61,12 @@ const defaultBadges = {
   71001: ["limited"]
 };
 
+const defaultChannels = {
+  "好日子設計有限公司": { discount: 65, hideDealerPrice: false },
+  "誠品生活": { discount: 60, hideDealerPrice: false },
+  "測試通路": { discount: 70, hideDealerPrice: true }
+};
+
 function historyKey(company) {
   return `dt-history-${encodeURIComponent(company || "")}`;
 }
@@ -89,6 +95,7 @@ async function fetchProducts() {
 }
 
 const money = n => `NT$ ${Number(n).toLocaleString("zh-TW")}`;
+const discountLabel = value => `${Number(value) / 10} 折`;
 
 function App() {
   const [user, setUser] = useState(null);
@@ -96,6 +103,7 @@ function App() {
   const [products, setProducts] = useState(fallbackProducts);
   const [content, setContent] = useState(() => JSON.parse(localStorage.getItem("dt-content") || "null") || defaultContent);
   const [productEdits, setProductEdits] = useState(() => JSON.parse(localStorage.getItem("dt-products") || "{}"));
+  const [channels, setChannels] = useState(() => JSON.parse(localStorage.getItem("dt-channels") || "null") || defaultChannels);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("常用採購");
@@ -104,6 +112,7 @@ function App() {
   const [toast, setToast] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [purchaseHistory, setPurchaseHistory] = useState({});
+  const channelSettings = user ? channels[user.company] || { discount: 100, hideDealerPrice: false } : { discount: 100, hideDealerPrice: false };
 
   useEffect(() => {
     fetchProducts().then(data => { setProducts(data); setLoading(false); });
@@ -124,7 +133,8 @@ function App() {
     p.name.toLowerCase().includes(query.toLowerCase())
   );
   const totalQty = cart.reduce((sum, x) => sum + x.qty, 0);
-  const subtotal = cart.reduce((sum, x) => sum + x.price * x.qty, 0);
+  const dealerPrice = price => Math.round(price * channelSettings.discount / 100);
+  const subtotal = cart.reduce((sum, x) => sum + dealerPrice(x.price) * x.qty, 0);
 
   function notify(message) {
     setToast(message);
@@ -201,11 +211,13 @@ function App() {
     setView("home");
   }
 
-  function saveAdmin(nextContent, nextProducts) {
+  function saveAdmin(nextContent, nextProducts, nextChannels) {
     setContent(nextContent);
     setProductEdits(nextProducts);
+    setChannels(nextChannels);
     localStorage.setItem("dt-content", JSON.stringify(nextContent));
     localStorage.setItem("dt-products", JSON.stringify(nextProducts));
+    localStorage.setItem("dt-channels", JSON.stringify(nextChannels));
     notify("前台內容已儲存");
   }
 
@@ -258,7 +270,10 @@ function App() {
                       <small>品號 {product.sku}{category === "常用採購" && ` · 歷史採購 ${purchaseHistory[product.id].orderCount} 次／${purchaseHistory[product.id].totalQty} 件`}</small>
                     </div>
                     <span className="row-category">{product.category}</span>
-                    <strong className="row-price">{money(product.price)}</strong>
+                    <div className="row-price">
+                      <small>零售價 {money(product.price)}</small>
+                      {!channelSettings.hideDealerPrice && <strong>經銷價 {money(dealerPrice(product.price))}</strong>}
+                    </div>
                     <div className="row-qty">
                       <button onClick={() => setQty(product, (cart.find(x => x.id === product.id)?.qty || 0) - 1)}><Minus /></button>
                       <input aria-label={`${product.name} 採購數量`} type="number" min="0" value={cart.find(x => x.id === product.id)?.qty || 0} onChange={e => setQty(product, e.target.value)} />
@@ -269,10 +284,10 @@ function App() {
               </div>
             )}
             </div>
-            <PurchaseList items={cart} subtotal={subtotal} totalQty={totalQty} onQty={changeQty} onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
+            <PurchaseList items={cart} subtotal={subtotal} totalQty={totalQty} dealerPrice={dealerPrice} settings={channelSettings} onQty={changeQty} onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
           </section>
         </main>
-      ) : view === "orders" ? <Orders orders={demoOrders} /> : <AdminPanel content={content} products={products} productEdits={productEdits} onSave={saveAdmin} />}
+      ) : view === "orders" ? <Orders orders={demoOrders} /> : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels} onSave={saveAdmin} />}
 
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
     </div>
@@ -326,20 +341,21 @@ function PartnerHome({ content, products, onShop }) {
   </main>;
 }
 
-function AdminPanel({ content, products, productEdits, onSave }) {
+function AdminPanel({ content, products, productEdits, channels, onSave }) {
   const [tab, setTab] = useState("home");
   const [draft, setDraft] = useState(content);
   const [edits, setEdits] = useState(productEdits);
+  const [channelDraft, setChannelDraft] = useState(channels);
 
   function updateProduct(product, field, value) {
     setEdits(prev => ({ ...prev, [product.id]: { ...(prev[product.id] || {}), [field]: value } }));
   }
 
   return <main className="admin-page">
-    <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁訊息、圖片與前台商品顯示內容。</p></div><button className="primary" onClick={() => onSave(draft, edits)}><Save /> 儲存所有變更</button></section>
+    <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">目前資料儲存在這台裝置的瀏覽器中。正式多人管理時，建議改接 Google Sheets 或後端資料庫。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button></aside>
+      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><UserRound /> 通路折數</button></aside>
       <section className="admin-content">
         {tab === "home" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
@@ -356,7 +372,7 @@ function AdminPanel({ content, products, productEdits, onSave }) {
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : <div className="admin-products">
+        </div> : tab === "products" ? <div className="admin-products">
           <div className="admin-product-head"><span>顯示</span><span>商品</span><span>名稱／狀態</span><span>分類</span><span>售價</span></div>
           {products.map(product => {
             const value = { ...product, badges: defaultBadges[product.id] || [], ...(edits[product.id] || {}) };
@@ -375,7 +391,7 @@ function AdminPanel({ content, products, productEdits, onSave }) {
               <input type="number" value={value.price} onChange={e => updateProduct(product, "price", Number(e.target.value))} />
             </div>;
           })}
-        </div>}
+        </div> : <ChannelManager channels={channelDraft} onChange={setChannelDraft} />}
       </section>
     </div>
   </main>;
@@ -392,19 +408,41 @@ function AdminField({ label, value, onChange, area, icon }) {
   return <label className="admin-field"><span>{label}</span><div>{icon && <Image />}{area ? <textarea value={value} onChange={e => onChange(e.target.value)} /> : <input value={value} onChange={e => onChange(e.target.value)} />}</div></label>;
 }
 
-function PurchaseList({ items, subtotal, totalQty, onQty, onRemove, onCheckout }) {
+function ChannelManager({ channels, onChange }) {
+  const [newName, setNewName] = useState("");
+  function update(name, field, value) {
+    onChange({ ...channels, [name]: { ...channels[name], [field]: value } });
+  }
+  function addChannel() {
+    const name = newName.trim();
+    if (!name || channels[name]) return;
+    onChange({ ...channels, [name]: { discount: 70, hideDealerPrice: false } });
+    setNewName("");
+  }
+  return <div className="channel-manager">
+    <div className="add-channel"><input value={newName} onChange={e => setNewName(e.target.value)} placeholder="輸入新通路公司名稱" /><button onClick={addChannel}><Plus /> 新增通路</button></div>
+    <div className="channel-head"><span>通路帳號／公司</span><span>經銷折數</span><span>價格顯示</span></div>
+    {Object.entries(channels).map(([name, value]) => <div className="channel-row" key={name}>
+      <strong>{name}</strong>
+      <label><input type="number" min="1" max="100" value={value.discount} onChange={e => update(name, "discount", Math.min(100, Math.max(1, Number(e.target.value))))} /><span>%</span><small>{discountLabel(value.discount)} = 零售價 × {(value.discount / 100).toFixed(2)}</small></label>
+      <label className="hide-price"><input type="checkbox" checked={value.hideDealerPrice} onChange={e => update(name, "hideDealerPrice", e.target.checked)} /><span>不顯示經銷價</span></label>
+    </div>)}
+  </div>;
+}
+
+function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, onQty, onRemove, onCheckout }) {
   return <aside className="purchase-list">
     <div className="list-head"><div><span className="eyebrow">CURRENT ORDER</span><h2>本次採購清單</h2></div><b>{items.length} 項／{totalQty} 件</b></div>
     <div className="list-items">{!items.length ? <div className="empty"><ShoppingBag /><h3>尚未選擇商品</h3><p>在左側輸入數量，商品會立即出現在這裡。</p></div> : items.map(item =>
       <div className="list-item" key={item.id}>
-        <div><strong>{item.name}</strong><small>{item.sku} · {money(item.price)}</small></div>
+        <div><strong>{item.name}</strong><small>{item.sku} · 零售價 {money(item.price)}{!settings.hideDealerPrice && ` · 經銷價 ${money(dealerPrice(item.price))}`}</small></div>
         <div className="qty"><button onClick={() => onQty(item.id, -1)}><Minus /></button><span>{item.qty}</span><button onClick={() => onQty(item.id, 1)}><Plus /></button></div>
-        <strong>{money(item.price * item.qty)}</strong>
+        <strong>{settings.hideDealerPrice ? `${item.qty} 件` : money(dealerPrice(item.price) * item.qty)}</strong>
         <button className="remove" onClick={() => onRemove(item.id)}><Trash2 /></button>
       </div>
     )}</div>
     <div className="list-footer">
-      <div className="summary"><span>採購總計</span><strong>{money(subtotal)}</strong><small>實際運費與優惠將由專人確認</small></div>
+      <div className="summary"><span>採購總計</span><strong>{settings.hideDealerPrice ? "價格另行確認" : money(subtotal)}</strong><small>{discountLabel(settings.discount)}通路價格 · 實際運費與優惠將由專人確認</small></div>
       <button className="outline" disabled={!items.length} onClick={() => window.print()}><FileDown /> 產生 PDF 採購單</button>
       <button className="primary checkout" disabled={!items.length} onClick={onCheckout}>確認送出訂單 <ChevronRight /></button>
     </div>

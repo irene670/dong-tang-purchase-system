@@ -37,6 +37,9 @@
 .product-badge.limited{background:#282c2b;color:#f5d69b}
 .row-category{font-size:11px;color:#727a77}
 .row-price{font-size:13px}
+.row-price small,.row-price strong{display:block}
+.row-price small{font-size:10px;color:#8c928f;text-decoration:none}
+.row-price strong{font-size:13px;color:var(--orange);margin-top:4px}
 .row-qty{display:grid;grid-template-columns:34px 60px 34px;border:1px solid #cfd2cf;width:max-content}
 .row-qty button{border:0;background:#f5f5f1;height:36px;display:grid;place-items:center}
 .row-qty button:hover{background:var(--green);color:#fff}
@@ -176,6 +179,18 @@
 .badge-editor{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .badge-editor label{display:flex;align-items:center;gap:3px;cursor:pointer}
 .badge-editor input[type=checkbox]{width:14px;height:14px;margin:0}
+.add-channel{display:flex;gap:10px;margin-bottom:22px}
+.add-channel input{flex:1;border:1px solid #cfd2cf;padding:12px}
+.add-channel button{border:0;background:var(--green);color:#fff;padding:10px 18px;display:flex;align-items:center;gap:7px}
+.add-channel svg{width:16px}
+.channel-head,.channel-row{display:grid;grid-template-columns:minmax(220px,1.2fr) minmax(260px,1fr) minmax(180px,.8fr);gap:20px;align-items:center}
+.channel-head{background:#f0f0eb;padding:12px 16px;font-size:11px;font-weight:700}
+.channel-row{padding:18px 16px;border-bottom:1px solid var(--line)}
+.channel-row>label:not(.hide-price){display:grid;grid-template-columns:80px 25px 1fr;align-items:center;gap:6px}
+.channel-row input[type=number]{width:80px;border:1px solid #cfd2cf;padding:9px;font-weight:700}
+.channel-row small{color:#8a908d;font-size:10px}
+.hide-price{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
+.hide-price input{width:17px;height:17px}
 
 @media(max-width:850px){
   .partner-home{padding:20px 15px 70px}
@@ -197,6 +212,8 @@
   .admin-form h2{grid-column:auto}
   .admin-products{overflow:auto}
   .admin-product-head,.admin-product-row{min-width:780px}
+  .channel-manager{overflow:auto}
+  .channel-head,.channel-row{min-width:720px}
 }
 @media(max-width:560px){
   .partner-hero h1{font-size:34px}
