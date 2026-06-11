@@ -46,6 +46,21 @@ const demoFrequent = {
   80776: { orderCount: 3, totalQty: 24 }
 };
 
+const productBadgeOptions = [
+  { key: "hot", label: "熱銷" },
+  { key: "new", label: "新品" },
+  { key: "recommended", label: "推薦" },
+  { key: "limited", label: "限量" }
+];
+
+const defaultBadges = {
+  92725: ["new", "hot"],
+  92715: ["new"],
+  78366: ["hot", "recommended"],
+  80776: ["recommended"],
+  71001: ["limited"]
+};
+
 function historyKey(company) {
   return `dt-history-${encodeURIComponent(company || "")}`;
 }
@@ -94,7 +109,11 @@ function App() {
     fetchProducts().then(data => { setProducts(data); setLoading(false); });
   }, []);
 
-  const managedProducts = products.map(p => ({ ...p, ...(productEdits[p.id] || {}) })).filter(p => p.visible !== false);
+  const managedProducts = products.map(p => ({
+    ...p,
+    badges: defaultBadges[p.id] || [],
+    ...(productEdits[p.id] || {})
+  })).filter(p => p.visible !== false);
   const frequentProducts = managedProducts
     .filter(p => purchaseHistory[p.id])
     .sort((a, b) => purchaseHistory[b.id].orderCount - purchaseHistory[a.id].orderCount);
@@ -234,7 +253,10 @@ function App() {
                 {category === "常用採購" && shown.length === 0 ? <div className="frequent-empty"><Clock3 /><h3>目前還沒有歷史採購品項</h3><p>完成第一筆訂單後，曾採購的商品會自動整理到這裡。</p><button onClick={() => setCategory("全部商品")}>瀏覽全部商品</button></div> : shown.map(product => (
                   <article className={`product-row ${cart.some(x => x.id === product.id) ? "selected" : ""}`} key={product.id}>
                     <img src={product.image} alt={product.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
-                    <div className="row-name"><strong>{product.name}</strong><small>品號 {product.sku}{category === "常用採購" && ` · 歷史採購 ${purchaseHistory[product.id].orderCount} 次／${purchaseHistory[product.id].totalQty} 件`}</small></div>
+                    <div className="row-name">
+                      <div className="product-title-line"><strong>{product.name}</strong><ProductBadges badges={product.badges} /></div>
+                      <small>品號 {product.sku}{category === "常用採購" && ` · 歷史採購 ${purchaseHistory[product.id].orderCount} 次／${purchaseHistory[product.id].totalQty} 件`}</small>
+                    </div>
                     <span className="row-category">{product.category}</span>
                     <strong className="row-price">{money(product.price)}</strong>
                     <div className="row-qty">
@@ -295,7 +317,7 @@ function PartnerHome({ content, products, onShop }) {
         <img src={content.newImage} alt={content.newTitle} />
         <div><span className="news-label">NEW</span><h3>{content.newTitle}</h3><p>{content.newText}</p><button className="primary" onClick={onShop}>立即採購</button></div>
       </div>
-      <div className="new-product-strip">{newest.map(p => <div key={p.id}><img src={p.image} alt={p.name} /><span>{p.category}</span><strong>{p.name}</strong><small>{money(p.price)}</small></div>)}</div>
+      <div className="new-product-strip">{newest.map(p => <div key={p.id}><img src={p.image} alt={p.name} /><span>{p.category}</span><strong>{p.name}</strong><ProductBadges badges={p.badges} /><small>{money(p.price)}</small></div>)}</div>
     </section>
     <section className="home-dual">
       <article className="event-card" id="events"><CalendarDays /><span className="eyebrow">PARTNER EVENT</span><h2>{content.eventTitle}</h2><b>{content.eventDate}</b><p>{content.eventText}</p></article>
@@ -335,13 +357,20 @@ function AdminPanel({ content, products, productEdits, onSave }) {
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
         </div> : <div className="admin-products">
-          <div className="admin-product-head"><span>顯示</span><span>商品</span><span>名稱</span><span>分類</span><span>售價</span></div>
+          <div className="admin-product-head"><span>顯示</span><span>商品</span><span>名稱／狀態</span><span>分類</span><span>售價</span></div>
           {products.map(product => {
-            const value = { ...product, ...(edits[product.id] || {}) };
+            const value = { ...product, badges: defaultBadges[product.id] || [], ...(edits[product.id] || {}) };
             return <div className="admin-product-row" key={product.id}>
               <input type="checkbox" checked={value.visible !== false} onChange={e => updateProduct(product, "visible", e.target.checked)} />
               <img src={value.image} alt="" />
-              <div><input value={value.name} onChange={e => updateProduct(product, "name", e.target.value)} /><input className="image-url" value={value.image} onChange={e => updateProduct(product, "image", e.target.value)} placeholder="圖片網址" /></div>
+              <div>
+                <input value={value.name} onChange={e => updateProduct(product, "name", e.target.value)} />
+                <div className="badge-editor">{productBadgeOptions.map(option => <label key={option.key}><input type="checkbox" checked={(value.badges || []).includes(option.key)} onChange={e => {
+                  const badges = e.target.checked ? [...(value.badges || []), option.key] : (value.badges || []).filter(key => key !== option.key);
+                  updateProduct(product, "badges", badges);
+                }} /><span className={`product-badge ${option.key}`}>{option.label}</span></label>)}</div>
+                <input className="image-url" value={value.image} onChange={e => updateProduct(product, "image", e.target.value)} placeholder="圖片網址" />
+              </div>
               <input value={value.category} onChange={e => updateProduct(product, "category", e.target.value)} />
               <input type="number" value={value.price} onChange={e => updateProduct(product, "price", Number(e.target.value))} />
             </div>;
@@ -350,6 +379,13 @@ function AdminPanel({ content, products, productEdits, onSave }) {
       </section>
     </div>
   </main>;
+}
+
+function ProductBadges({ badges = [] }) {
+  return <span className="product-badges">{badges.map(key => {
+    const badge = productBadgeOptions.find(option => option.key === key);
+    return badge ? <span className={`product-badge ${key}`} key={key}>{badge.label}</span> : null;
+  })}</span>;
 }
 
 function AdminField({ label, value, onChange, area, icon }) {
