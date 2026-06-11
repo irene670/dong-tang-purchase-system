@@ -16,7 +16,7 @@ function doGet(e) {
     const action = e.parameter.action || 'products';
     const sheet = action === 'orders' ? getOrCreateOrderSheet_(ss)
       : action === 'channels' ? getSheet_(ss, CHANNEL_SHEET, ['通路名稱', '經銷模式', '折數百分比', '隱藏經銷價'])
-      : action === 'sales' ? getSheet_(ss, SALES_SHEET, ['銷貨單號', '經銷商', '銷貨月份', '銷貨日期', '商品明細JSON', '總金額', '狀態', '附件網址', '備註', '庫存已處理'])
+      : action === 'sales' ? getSheet_(ss, SALES_SHEET, ['銷貨單號', '經銷商', '銷貨月份', '銷貨日期', '商品明細JSON', '總金額', '狀態', '客戶原版附件', '正式銷貨單附件', '備註', '庫存已處理'])
       : action === 'movements' ? getSheet_(ss, MOVEMENT_SHEET, ['異動編號', '日期', '經銷商', '商品ID', 'SKU', '商品名稱', '異動類型', '異動數量', '異動前', '異動後', '來源單號', '操作者', '備註'])
       : ss.getSheets().find(item => item.getSheetId() === PRODUCT_SHEET_ID);
     if (!sheet) throw new Error('找不到商品分頁 gid=' + PRODUCT_SHEET_ID);
@@ -90,7 +90,8 @@ function handleInventoryAction_(ss, action, payload) {
 }
 
 function saveSales_(ss, payload) {
-  const sheet = getSheet_(ss, SALES_SHEET, ['銷貨單號', '經銷商', '銷貨月份', '銷貨日期', '商品明細JSON', '總金額', '狀態', '附件網址', '備註', '庫存已處理']);
+  const sheet = getSheet_(ss, SALES_SHEET, ['銷貨單號', '經銷商', '銷貨月份', '銷貨日期', '商品明細JSON', '總金額', '狀態', '客戶原版附件', '正式銷貨單附件', '備註', '庫存已處理']);
+  if (sheet.getLastColumn() < 11) sheet.getRange(1, 1, 1, 11).setValues([['銷貨單號', '經銷商', '銷貨月份', '銷貨日期', '商品明細JSON', '總金額', '狀態', '客戶原版附件', '正式銷貨單附件', '備註', '庫存已處理']]);
   const existing = findRowByKey_(sheet, payload.id);
   const oldStatus = existing ? String(sheet.getRange(existing, 7).getValue()) : '';
   const shouldApply = ['已確認', '已請款'].includes(payload.status);
@@ -112,7 +113,7 @@ function saveSales_(ss, payload) {
     });
   }
   const total = payload.items.reduce((sum, item) => sum + Number(item.qty) * Number(item.price), 0);
-  upsertByKey_(sheet, payload.id, [payload.id, payload.company, payload.month, payload.date, JSON.stringify(payload.items), total, payload.status, payload.attachment || '', payload.note || '', shouldApply]);
+  upsertByKey_(sheet, payload.id, [payload.id, payload.company, payload.month, payload.date, JSON.stringify(payload.items), total, payload.status, payload.attachment || '', payload.formalAttachment || '', payload.note || '', shouldApply]);
   return json({ ok: true, id: payload.id });
 }
 

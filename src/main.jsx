@@ -287,7 +287,7 @@ function App() {
         <nav className={mobileNav ? "open" : ""}>
           {!admin && <button className={view === "home" ? "active" : ""} onClick={() => { setView("home"); setMobileNav(false); }}>夥伴首頁</button>}
           <button className={view === "shop" ? "active" : ""} onClick={() => { setView("shop"); setMobileNav(false); }}>商品採購</button>
-          <button className={view === "orders" ? "active" : ""} onClick={() => { setView("orders"); setMobileNav(false); }}>訂單進度</button>
+          <button className={view === "orders" ? "active" : ""} onClick={() => { setView("orders"); setMobileNav(false); }}>單據與進度</button>
           {admin && <button className={view === "admin" ? "active" : ""} onClick={() => { setView("admin"); setMobileNav(false); }}>內容管理</button>}
           <a href="https://eavo.com.tw/" target="_blank">品牌官網</a>
         </nav>
@@ -341,7 +341,7 @@ function App() {
             <PurchaseList items={cart} subtotal={subtotal} totalQty={totalQty} dealerPrice={dealerPrice} settings={channelSettings} onQty={changeQty} onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
           </section>
         </main>
-      ) : view === "orders" ? <Orders orders={demoOrders} /> : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels} movements={movements} sales={sales} onSave={saveAdmin} onSaveInventory={saveInventory} />}
+      ) : view === "orders" ? <DocumentCenter company={user.company} orders={demoOrders} sales={sales.filter(s => s.company === user.company)} products={managedProducts} movements={movements.filter(m => m.company === user.company)} settings={channelSettings} /> : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels} movements={movements} sales={sales} onSave={saveAdmin} onSaveInventory={saveInventory} />}
 
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
     </div>
@@ -409,7 +409,7 @@ function AdminPanel({ content, products, productEdits, channels, movements, sale
     <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">目前資料儲存在這台裝置的瀏覽器中。正式多人管理時，建議改接 Google Sheets 或後端資料庫。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><UserRound /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
+      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><UserRound /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
       <section className="admin-content">
         {tab === "home" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
@@ -445,7 +445,7 @@ function AdminPanel({ content, products, productEdits, channels, movements, sale
               <input type="number" value={value.price} onChange={e => updateProduct(product, "price", Number(e.target.value))} />
             </div>;
           })}
-        </div> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
@@ -571,6 +571,88 @@ function MovementHistory({ products, movements }) {
   return <div className="movement-list table-scroll"><div className="movement-head"><span>日期</span><span>經銷商</span><span>商品</span><span>異動類型</span><span>數量</span><span>異動前／後</span><span>來源單號</span><span>操作者／備註</span></div>{[...movements].reverse().map(m => <div className="movement-row" key={m.id}><span>{m.date}</span><span>{m.company}</span><span>{productMap[m.productId]?.name || m.productId}</span><span>{m.type}</span><b className={m.qty < 0 ? "negative" : "positive"}>{m.qty > 0 ? "+" : ""}{m.qty}</b><span>{m.before} → {m.after}</span><span>{m.source}</span><span>{m.operator}<small>{m.note}</small></span></div>)}</div>;
 }
 
+function FormalSalesImport({ channels, products, movements, sales, onSave }) {
+  const [rows, setRows] = useState([]);
+  const [fileName, setFileName] = useState("");
+  const [sourceFile, setSourceFile] = useState(null);
+  const [errors, setErrors] = useState([]);
+  const productBySku = Object.fromEntries(products.map(p => [String(p.sku), p]));
+
+  async function parseExcel(file) {
+    setFileName(file?.name || "");
+    setSourceFile(file || null);
+    setRows([]);
+    setErrors([]);
+    if (!file || !/\.xlsx$/i.test(file.name)) {
+      setErrors(["僅接受 .xlsx 正式銷貨單"]);
+      return;
+    }
+    try {
+      const { default: readXlsxFile } = await import("read-excel-file/browser");
+      const result = await readXlsxFile(file);
+      const excelRows = Array.isArray(result?.[0]?.data) ? result[0].data : result;
+      const headers = (excelRows[0] || []).map(v => String(v ?? "").trim());
+      const required = ["經銷商", "銷貨月份", "銷貨日期", "SKU", "商品名稱", "售出數量", "單價", "備註"];
+      const missing = required.filter(h => !headers.includes(h));
+      if (missing.length) throw new Error(`缺少欄位：${missing.join("、")}`);
+      const parsed = [];
+      excelRows.slice(1).forEach((row, index) => {
+        const rowNumber = index + 2;
+        const values = Object.fromEntries(headers.map((h, i) => [h, String(row[i] ?? "").trim()]));
+        if (Object.values(values).every(v => !v)) return;
+        parsed.push({ rowNumber, company: values["經銷商"], month: values["銷貨月份"], date: values["銷貨日期"], sku: values["SKU"], name: values["商品名稱"], qty: Number(values["售出數量"]), price: Number(values["單價"]), note: values["備註"] });
+      });
+      const validation = [];
+      parsed.forEach(r => {
+        if (!channels[r.company] || channels[r.company].mode !== "consignment") validation.push(`第 ${r.rowNumber} 列：經銷商不存在或非寄售模式`);
+        if (!productBySku[r.sku]) validation.push(`第 ${r.rowNumber} 列：找不到 SKU ${r.sku}`);
+        if (!Number.isFinite(r.qty) || r.qty <= 0) validation.push(`第 ${r.rowNumber} 列：售出數量必須大於 0`);
+        if (!Number.isFinite(r.price) || r.price < 0) validation.push(`第 ${r.rowNumber} 列：單價格式錯誤`);
+      });
+      setRows(parsed);
+      setErrors(validation);
+    } catch (error) {
+      setErrors([error.message || "Excel 解析失敗"]);
+    }
+  }
+
+  async function confirmImport() {
+    if (!rows.length || errors.length) return;
+    let formalAttachment = fileName;
+    try { formalAttachment = await uploadSalesFile(sourceFile); } catch { /* Keep filename as local fallback. */ }
+    const grouped = Object.values(rows.reduce((acc, row) => {
+      const key = `${row.company}|${row.month}`;
+      if (!acc[key]) acc[key] = { company: row.company, month: row.month, date: row.date, note: `Excel 匯入：${fileName}`, items: [] };
+      const product = productBySku[row.sku];
+      acc[key].items.push({ productId: product.id, sku: product.sku, name: product.name, qty: row.qty, price: row.price, note: row.note });
+      return acc;
+    }, {}));
+    let nextMovements = [...movements];
+    const docs = grouped.map((group, groupIndex) => {
+      const id = `FS-${Date.now()}-${groupIndex + 1}`;
+      group.items.forEach((item, index) => {
+        const before = stockOf(nextMovements, group.company, item.productId);
+        nextMovements.push({ id: `MV-${Date.now()}-X${groupIndex}-${index}`, date: group.date, company: group.company, productId: item.productId, type: "正式銷貨單扣庫存", qty: -item.qty, before, after: before - item.qty, source: `${id}:${item.productId}`, operator: "admin", note: group.note });
+      });
+      const doc = { ...group, id, status: "已確認", attachment: "", formalAttachment, imported: true };
+      postScript({ action: "saveSales", ...doc }).catch(() => {});
+      return doc;
+    });
+    onSave(nextMovements, [...docs, ...sales]);
+    setRows([]);
+    setFileName("");
+    setSourceFile(null);
+  }
+
+  return <div className="formal-import">
+    <div className="import-guide"><FileText /><div><h2>匯入正式銷貨單</h2><p>Excel 欄位順序不限，但必須包含：經銷商、銷貨月份、銷貨日期、SKU、商品名稱、售出數量、單價、備註。</p><a className="template-download" href="/東瑭正式銷貨單匯入範本.xlsx" download><FileDown /> 下載標準 Excel 範本</a></div><label><Upload /> 選擇 Excel<input type="file" accept=".xlsx" onChange={e => parseExcel(e.target.files?.[0])} /></label></div>
+    {fileName && <div className="import-file">檔案：<strong>{fileName}</strong>｜解析 {rows.length} 筆</div>}
+    {errors.length > 0 && <div className="import-errors"><strong>匯入前請修正：</strong>{errors.map(error => <span key={error}>{error}</span>)}</div>}
+    {rows.length > 0 && <div className="import-preview table-scroll"><div className="import-head"><span>列</span><span>經銷商</span><span>月份／日期</span><span>SKU／商品</span><span>數量</span><span>單價</span><span>預計庫存</span></div>{rows.map(row => <div className="import-row" key={row.rowNumber}><span>{row.rowNumber}</span><strong>{row.company}</strong><span>{row.month}<small>{row.date}</small></span><span>{row.sku}<small>{productBySku[row.sku]?.name || row.name}</small></span><b>{row.qty}</b><span>{money(row.price)}</span><span>{productBySku[row.sku] ? stockOf(movements, row.company, productBySku[row.sku].id) - row.qty : "-"}</span></div>)}</div>}
+    <button className="primary import-confirm" disabled={!rows.length || errors.length > 0} onClick={confirmImport}><CheckCircle2 /> 確認匯入並沖銷庫存</button>
+  </div>;
+}
+
 function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, onQty, onRemove, onCheckout }) {
   return <aside className="purchase-list">
     <div className="list-head"><div><span className="eyebrow">CURRENT ORDER</span><h2>本次採購清單</h2></div><b>{items.length} 項／{totalQty} 件</b></div>
@@ -590,10 +672,15 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, onQty,
   </aside>;
 }
 
-function Orders({ orders }) {
+function DocumentCenter({ company, orders, sales, products, movements, settings }) {
+  const [tab, setTab] = useState("progress");
+  const productMap = Object.fromEntries(products.map(p => [p.id, p]));
+  const stockRows = products.filter(p => stockOf(movements, company, p.id) !== 0);
   const icon = s => s === "已完成" ? <PackageCheck /> : <Truck />;
-  return <main className="orders-page">
-    <div className="orders-intro"><span className="eyebrow">ORDER TRACKING</span><h1>訂單進度</h1><p>從訂單確認、備貨到出貨，每一步都清楚掌握。</p></div>
+  return <main className="orders-page document-center">
+    <div className="orders-intro"><span className="eyebrow">PARTNER DOCUMENT CENTER</span><h1>單據與進度中心</h1><p>統整採購進度、歷史採購、銷貨單據與目前寄售庫存。</p></div>
+    <div className="document-tabs"><button className={tab === "progress" ? "active" : ""} onClick={() => setTab("progress")}>目前進度</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>歷史採購</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>歷史銷貨</button>{settings.mode === "consignment" && <button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>寄售庫存</button>}</div>
+    {tab === "progress" && <>
     <div className="current-order">
       <div className="order-top"><div><span>最新訂單</span><h2>DT-20260610-024</h2><small>2026/06/10 14:32 建立 · 共 8 項商品</small></div><span className="status preparing"><Clock3 /> 備貨中</span></div>
       <div className="timeline">
@@ -605,7 +692,10 @@ function Orders({ orders }) {
       </div>
       <div className="order-total"><span>訂單總金額</span><strong>{money(18760)}</strong><button onClick={() => window.print()}><FileDown /> 下載採購單</button></div>
     </div>
-    <div className="history"><h2>歷史訂單</h2>{orders.map(o => <div className="history-row" key={o.id}><i>{icon(o.status)}</i><div><strong>{o.id}</strong><small>{o.date} · {o.items} 項商品</small></div><span className={`status ${o.status === "已完成" ? "complete" : ""}`}>{o.status}</span><strong>{money(o.amount)}</strong><button><ChevronRight /></button></div>)}</div>
+    </>}
+    {tab === "orders" && <div className="history document-list"><h2>歷史採購紀錄</h2>{orders.map(o => <div className="history-row" key={o.id}><i>{icon(o.status)}</i><div><strong>{o.id}</strong><small>{o.date} · {o.items} 項商品</small></div><span className={`status ${o.status === "已完成" ? "complete" : ""}`}>{o.status}</span><strong>{money(o.amount)}</strong><button><FileDown /></button></div>)}</div>}
+    {tab === "sales" && <div className="customer-sales document-list"><h2>歷史銷貨紀錄</h2>{sales.length === 0 ? <div className="document-empty">目前沒有銷貨單紀錄</div> : sales.map(doc => <article key={doc.id}><div><span className="status">{doc.status}</span><strong>{doc.id}</strong><small>{doc.month} · {doc.items.reduce((s, i) => s + i.qty, 0)} 件</small></div><strong>{money(doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><div className="document-files">{doc.attachment && <a href={doc.attachment} target="_blank"><FileText /> 原版銷貨單</a>}{doc.formalAttachment && <a href={doc.formalAttachment.startsWith("http") ? doc.formalAttachment : "#"}><FileDown /> 正式銷貨單</a>}<button onClick={() => window.print()}><FileDown /> 系統格式</button></div></article>)}</div>}
+    {tab === "stock" && <div className="customer-stock document-list"><h2>目前寄售庫存</h2><div className="customer-stock-head"><span>SKU</span><span>商品</span><span>目前庫存</span><span>狀態</span></div>{stockRows.map(p => { const qty = stockOf(movements, company, p.id); return <div className="customer-stock-row" key={p.id}><span>{p.sku}</span><strong>{p.name}</strong><b>{qty} 件</b><span className={qty <= 5 ? "low" : ""}>{qty <= 5 ? "建議補貨" : "庫存正常"}</span></div>; })}</div>}
   </main>;
 }
 
