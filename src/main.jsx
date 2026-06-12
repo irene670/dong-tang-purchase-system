@@ -1,6 +1,9 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { getUser, handleAuthCallback, login as identityLogin, logout as identityLogout } from "@netlify/identity";
+import {
+  acceptInvite, getUser, handleAuthCallback, login as identityLogin,
+  logout as identityLogout, requestPasswordRecovery, updateUser
+} from "@netlify/identity";
 import {
   Search, ShoppingBag, Plus, Minus, Trash2, ChevronRight,
   PackageCheck, Truck, ClipboardCheck, FileDown, LogOut, UserRound,
@@ -150,6 +153,7 @@ function App() {
   const [sales, setSales] = useState(() => JSON.parse(localStorage.getItem("dt-sales") || "null") || defaultSales);
   const [orders, setOrders] = useState([]);
   const [authLoading, setAuthLoading] = useState(true);
+  const [authCallback, setAuthCallback] = useState(null);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("常用採購");
@@ -163,9 +167,11 @@ function App() {
 
   useEffect(() => {
     fetchProducts().then(data => { setProducts(data); setLoading(false); });
-    handleAuthCallback().catch(() => {}).finally(async () => {
+    handleAuthCallback().then(result => {
+      if (result?.type === "invite" || result?.type === "recovery") setAuthCallback(result);
+    }).catch(() => {}).finally(async () => {
       const identityUser = await getUser().catch(() => null);
-      if (identityUser) await loadAccount();
+      if (identityUser && !window.location.hash.includes("recovery_token")) await loadAccount();
       setAuthLoading(false);
     });
   }, []);
@@ -340,6 +346,13 @@ function App() {
     await loadAccount();
   }
 
+  async function completePassword(password) {
+    if (authCallback?.type === "invite") await acceptInvite(authCallback.token, password);
+    else if (authCallback?.type === "recovery") await updateUser({ password });
+    setAuthCallback(null);
+    await loadAccount();
+  }
+
   async function saveAdmin(nextContent, nextProducts, nextChannels) {
     await api("settings", {
       method: "PUT",
@@ -362,6 +375,7 @@ function App() {
   }
 
   if (authLoading) return <div className="loading-screen"><RefreshCw /> 正在確認登入狀態...</div>;
+  if (authCallback) return <SetPassword mode={authCallback.type} onSubmit={completePassword} />;
   if (!user) return <Login onLogin={login} />;
 
   return (
@@ -445,6 +459,7 @@ function Login({ onLogin }) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [recoverySent, setRecoverySent] = useState(false);
   async function submit() {
     setSubmitting(true);
     setError("");
@@ -456,6 +471,19 @@ function Login({ onLogin }) {
       setSubmitting(false);
     }
   }
+  async function forgotPassword() {
+    if (!email) {
+      setError("請先輸入電子郵件");
+      return;
+    }
+    setError("");
+    try {
+      await requestPasswordRecovery(email);
+      setRecoverySent(true);
+    } catch (err) {
+      setError(err.message || "無法寄送密碼重設信");
+    }
+  }
   return <div className="login-page">
     <div className="login-brand"><span className="brand-mark">東</span><div><strong>東瑭國際</strong><small>客戶採購系統</small></div></div>
     <div className="login-panel">
@@ -464,8 +492,43 @@ function Login({ onLogin }) {
       <label>電子郵件<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
       <label>密碼<input type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>
       {error && <small className="login-error">{error}</small>}
+      {recoverySent && <small className="login-success">密碼重設信已寄出，請檢查信箱。</small>}
       <button className="primary login-submit" disabled={submitting || !email || !password} onClick={submit}>{submitting ? "登入中..." : "登入採購系統"} <ChevronRight /></button>
+      <button className="forgot-password" type="button" onClick={forgotPassword}>忘記密碼</button>
       <small className="demo-hint">帳號由東瑭管理員邀請建立，不開放自行註冊。</small>
+    </div>
+    <div className="login-visual"><div><span>DESIGN IN TAIWAN</span><h2>把美好的<br />台灣故事，<br />帶進日常。</h2></div></div>
+  </div>;
+}
+
+function SetPassword({ mode, onSubmit }) {
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  async function submit() {
+    if (password.length < 8) return setError("密碼至少需要 8 個字元");
+    if (password !== confirm) return setError("兩次輸入的密碼不一致");
+    setSubmitting(true);
+    setError("");
+    try {
+      await onSubmit(password);
+    } catch (err) {
+      setError(err.message || "連結可能已過期，請重新寄送邀請信");
+      setSubmitting(false);
+    }
+  }
+  return <div className="login-page">
+    <div className="login-brand"><span className="brand-mark">東</span><div><strong>東瑭國際</strong><small>客戶採購系統</small></div></div>
+    <div className="login-panel">
+      <span className="eyebrow">ACCOUNT SETUP</span>
+      <h1>{mode === "invite" ? "建立登入密碼" : "設定新密碼"}</h1>
+      <p>{mode === "invite" ? "完成密碼設定後，即可開始使用採購系統。" : "請輸入新的登入密碼。"}</p>
+      <label>新密碼<input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} /></label>
+      <label>再次輸入密碼<input type="password" autoComplete="new-password" value={confirm} onChange={e => setConfirm(e.target.value)} /></label>
+      {error && <small className="login-error">{error}</small>}
+      <button className="primary login-submit" disabled={submitting} onClick={submit}>{submitting ? "設定中..." : "完成密碼設定"} <ChevronRight /></button>
+      <small className="demo-hint">密碼至少需要 8 個字元。</small>
     </div>
     <div className="login-visual"><div><span>DESIGN IN TAIWAN</span><h2>把美好的<br />台灣故事，<br />帶進日常。</h2></div></div>
   </div>;

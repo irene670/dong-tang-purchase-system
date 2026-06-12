@@ -111,6 +111,11 @@
   .list-item>.qty{grid-column:2}
   .list-item>strong{grid-column:3;text-align:right;color:var(--orange)}
 }
+
+.login-error,.login-success{display:block;margin-top:14px;text-align:center}
+.login-error{color:#b33d2e}
+.login-success{color:#257357}
+.forgot-password{display:block;margin:14px auto 0;border:0;background:transparent;color:#5e746f;text-decoration:underline}
 @media print{
   .purchase-page{display:block!important;padding:0}
   .purchase-heading,.product-browser{display:none!important}
