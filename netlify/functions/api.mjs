@@ -53,6 +53,9 @@ async function bootstrap(user) {
   const movements = isAdmin(user)
     ? await db.sql`SELECT m.*, d.company_name FROM inventory_movements m JOIN dealers d ON d.id=m.dealer_id ORDER BY m.created_at`
     : await db.sql`SELECT * FROM inventory_movements WHERE dealer_id=${dealer.id} ORDER BY created_at`;
+  const stores = isAdmin(user)
+    ? await db.sql`SELECT * FROM dealer_stores ORDER BY dealer_id, is_default DESC, store_name`
+    : await db.sql`SELECT * FROM dealer_stores WHERE dealer_id=${dealer.id} ORDER BY is_default DESC, store_name`;
   return {
     user: { id: user.id, email: user.email, name: user.name, roles: user.roles },
     admin: isAdmin(user),
@@ -60,6 +63,7 @@ async function bootstrap(user) {
     content: content[0]?.value || {},
     productOverrides: products,
     dealers,
+    stores,
     orders: orders.map(o => ({ ...o, items: orderItems.filter(i => i.order_id === o.id) })),
     sales: sales.map(s => ({ ...s, items: salesItems.filter(i => i.sales_document_id === s.id) })),
     movements
@@ -69,11 +73,28 @@ async function bootstrap(user) {
 async function createOrder(user, body) {
   const dealer = await dealerFor(user);
   if (!Array.isArray(body.items) || !body.items.length) return json({ error: "採購清單不可為空" }, 400);
+  if (!body.storeId) return json({ error: "請選擇收貨門市" }, 400);
+  const stores = await db.sql`
+    SELECT * FROM dealer_stores WHERE id=${body.storeId} AND dealer_id=${dealer.id} AND active=true`;
+  if (!stores.length) return json({ error: "找不到可使用的收貨門市" }, 400);
+  const store = stores[0];
+  const shippingSnapshot = {
+    storeName: store.store_name,
+    companyName: store.company_name,
+    taxId: store.tax_id,
+    postalCode: store.postal_code,
+    address: store.address,
+    recipientName: store.recipient_name,
+    recipientPhone: store.recipient_phone,
+    recipientEmail: store.recipient_email,
+    deliveryNote: store.delivery_note
+  };
   const orderNo = `DT-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${String(Date.now()).slice(-5)}`;
   const total = body.items.reduce((sum, item) => sum + Number(item.dealerPrice) * Number(item.qty), 0);
   const orders = await db.sql`
-    INSERT INTO orders (order_no, dealer_id, contact_name, total_amount)
-    VALUES (${orderNo}, ${dealer.id}, ${body.contact || dealer.contact_name}, ${total}) RETURNING *`;
+    INSERT INTO orders (order_no, dealer_id, contact_name, total_amount, store_id, shipping_snapshot)
+    VALUES (${orderNo}, ${dealer.id}, ${body.contact || dealer.contact_name}, ${total},
+      ${store.id}, ${JSON.stringify(shippingSnapshot)}::jsonb) RETURNING *`;
   for (const item of body.items) {
     await db.sql`
       INSERT INTO order_items
@@ -82,6 +103,58 @@ async function createOrder(user, body) {
         ${item.image || null}, ${Number(item.price)}, ${Number(item.dealerPrice)}, ${Number(item.qty)})`;
   }
   return json({ ok: true, orderNo });
+}
+
+async function saveDealerProfile(user, body) {
+  const ownDealer = await dealerFor(user);
+  const dealerId = isAdmin(user) && body.dealerId ? body.dealerId : ownDealer.id;
+  if (!body.profile?.companyName?.trim()) return json({ error: "公司名稱不可空白" }, 400);
+  const updated = await db.sql`
+    UPDATE dealers SET company_name=${body.profile.companyName.trim()},
+      contact_name=${body.profile.contactName?.trim() || ''},
+      tax_id=${body.profile.taxId?.trim() || ''},
+      invoice_title=${body.profile.invoiceTitle?.trim() || ''},
+      invoice_address=${body.profile.invoiceAddress?.trim() || ''},
+      phone=${body.profile.phone?.trim() || ''},
+      billing_email=${body.profile.billingEmail?.trim() || ''},
+      updated_at=now()
+    WHERE id=${dealerId} RETURNING *`;
+  if (!updated.length) return json({ error: "找不到經銷商" }, 404);
+  return json({ ok: true, dealer: updated[0] });
+}
+
+async function saveStore(user, body) {
+  const ownDealer = await dealerFor(user);
+  const dealerId = isAdmin(user) && body.dealerId ? body.dealerId : ownDealer.id;
+  const store = body.store || {};
+  if (!store.storeName?.trim() || !store.companyName?.trim() || !store.address?.trim()
+      || !store.recipientName?.trim() || !store.recipientPhone?.trim()) {
+    return json({ error: "請填寫門市名稱、廠商名稱、地址、收件人與電話" }, 400);
+  }
+  if (store.isDefault) {
+    await db.sql`UPDATE dealer_stores SET is_default=false, updated_at=now() WHERE dealer_id=${dealerId}`;
+  }
+  let rows;
+  if (store.id) {
+    rows = await db.sql`
+      UPDATE dealer_stores SET store_name=${store.storeName.trim()}, company_name=${store.companyName.trim()},
+        tax_id=${store.taxId?.trim() || ''}, postal_code=${store.postalCode?.trim() || ''},
+        address=${store.address.trim()}, recipient_name=${store.recipientName.trim()},
+        recipient_phone=${store.recipientPhone.trim()}, recipient_email=${store.recipientEmail?.trim() || ''},
+        delivery_note=${store.deliveryNote?.trim() || ''}, is_default=${Boolean(store.isDefault)},
+        active=${store.active !== false}, updated_at=now()
+      WHERE id=${store.id} AND dealer_id=${dealerId} RETURNING *`;
+  } else {
+    rows = await db.sql`
+      INSERT INTO dealer_stores (dealer_id, store_name, company_name, tax_id, postal_code, address,
+        recipient_name, recipient_phone, recipient_email, delivery_note, is_default)
+      VALUES (${dealerId}, ${store.storeName.trim()}, ${store.companyName.trim()}, ${store.taxId?.trim() || ''},
+        ${store.postalCode?.trim() || ''}, ${store.address.trim()}, ${store.recipientName.trim()},
+        ${store.recipientPhone.trim()}, ${store.recipientEmail?.trim() || ''},
+        ${store.deliveryNote?.trim() || ''}, ${Boolean(store.isDefault)}) RETURNING *`;
+  }
+  if (!rows.length) return json({ error: "找不到門市或沒有修改權限" }, 404);
+  return json({ ok: true, store: rows[0] });
 }
 
 async function saveSettings(user, body) {
@@ -125,6 +198,9 @@ export default async function handler(req) {
     if (req.method === "GET" && route === "bootstrap") return json(await bootstrap(user));
     const body = req.method === "GET" ? {} : await req.json();
     if (req.method === "POST" && route === "orders") return createOrder(user, body);
+    if (req.method === "PUT" && route === "dealer-profile") return saveDealerProfile(user, body);
+    if (req.method === "POST" && route === "stores") return saveStore(user, body);
+    if (req.method === "PUT" && route === "stores") return saveStore(user, body);
     if (req.method === "PUT" && route === "settings") return saveSettings(user, body);
     return json({ error: "Not found" }, 404);
   } catch (error) {

@@ -116,6 +116,54 @@
 .login-error{color:#b33d2e}
 .login-success{color:#257357}
 .forgot-password{display:block;margin:14px auto 0;border:0;background:transparent;color:#5e746f;text-decoration:underline}
+
+/* Dealer organization and shipping stores */
+.profile-page{max-width:1280px;padding:55px 4vw 110px}
+.profile-heading{display:flex;align-items:end;justify-content:space-between;margin-bottom:28px}
+.profile-heading h1{font-family:"Shippori Mincho";font-size:40px;margin:8px 0}
+.profile-heading p{margin:0;color:#7e8581}
+.profile-heading>label{font-size:11px;font-weight:700}
+.profile-heading select{display:block;min-width:260px;margin-top:7px;border:1px solid var(--line);background:#fff;padding:11px}
+.profile-card{background:#fff;border:1px solid var(--line);padding:28px;margin-bottom:20px}
+.profile-card-title{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:22px}
+.profile-card-title h2{font-family:"Shippori Mincho";margin:0 0 5px}
+.profile-card-title p{margin:0;color:#858b88;font-size:12px}
+.profile-card-title svg{width:17px}
+.profile-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.profile-input{display:block}
+.profile-input.wide{grid-column:1/-1}
+.profile-input>span{display:block;font-size:11px;font-weight:700;margin-bottom:7px}
+.profile-input input,.profile-input textarea{width:100%;border:1px solid #cfd2cf;background:#fff;padding:11px;outline:0}
+.profile-input textarea{min-height:75px;resize:vertical}
+.store-layout{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(340px,.85fr);gap:24px}
+.store-list article{position:relative;border:1px solid var(--line);padding:18px;margin-bottom:10px}
+.store-list article.inactive{opacity:.52;background:#f2f2ee}
+.store-list article strong,.store-list article small{display:block}
+.store-list article div>span{display:inline-block;background:#e8f3ee;color:#287157;padding:4px 7px;font-size:9px;font-weight:700;margin:7px 0}
+.store-list article p{font-size:12px;margin:9px 0;color:#57635f}
+.store-list article small{color:#8a908d}
+.store-list article>button{position:absolute;right:15px;top:15px;border:1px solid var(--green);background:#fff;padding:6px 11px;font-size:11px}
+.store-form{background:#f3f2ed;padding:22px;display:grid;gap:13px}
+.store-form h3{font-family:"Shippori Mincho";margin:0}
+.two-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.store-checks{display:flex;gap:18px;flex-wrap:wrap;font-size:11px;font-weight:700}
+.store-checks label{display:flex;gap:6px;align-items:center}
+.store-form-actions{display:flex;justify-content:flex-end;gap:8px}
+.store-form-actions>button:not(.primary){border:1px solid var(--green);background:#fff;padding:10px 16px}
+.shipping-selector{padding:17px 20px;border-bottom:1px solid var(--line);background:#f1f4f1}
+.shipping-selector>div:first-child{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+.shipping-selector>div:first-child button{border:0;background:transparent;text-decoration:underline;font-size:11px;color:#56716a}
+.shipping-selector select{width:100%;border:1px solid #bcc7c2;background:#fff;padding:10px}
+.shipping-selector p{background:#fff;border-left:3px solid var(--orange);padding:10px 12px;margin:9px 0 0}
+.shipping-selector p b,.shipping-selector p span,.shipping-selector p small{display:block}
+.shipping-selector p span{font-size:11px;margin:5px 0}.shipping-selector p small{color:#777}
+.shipping-empty{background:#fff0e8;color:#a64a29;padding:11px;font-size:11px}
+
+@media(max-width:850px){
+  .profile-heading{align-items:flex-start;gap:18px;flex-direction:column}
+  .profile-grid,.store-layout{grid-template-columns:1fr}
+  .profile-input.wide{grid-column:auto}
+}
 @media print{
   .purchase-page{display:block!important;padding:0}
   .purchase-heading,.product-browser{display:none!important}
