@@ -170,6 +170,9 @@ function App() {
   const frequentProducts = managedProducts
     .filter(p => purchaseHistory[p.id])
     .sort((a, b) => purchaseHistory[b.id].orderCount - purchaseHistory[a.id].orderCount);
+  const inventoryFor = (company, productId) => movements
+    .filter(m => m.company === company && Number(m.productId) === Number(productId))
+    .reduce((sum, m) => sum + Number(m.qty), 0);
   const inventoryProductIds = new Set(movements.filter(m => m.company === user?.company).map(m => Number(m.productId)));
   const inventoryProducts = managedProducts
     .filter(p => inventoryProductIds.has(Number(p.id)))
@@ -188,9 +191,6 @@ function App() {
   );
   const totalQty = cart.reduce((sum, x) => sum + x.qty, 0);
   const dealerPrice = price => Math.round(price * channelSettings.discount / 100);
-  const inventoryFor = (company, productId) => movements
-    .filter(m => m.company === company && Number(m.productId) === Number(productId))
-    .reduce((sum, m) => sum + Number(m.qty), 0);
   const subtotal = cart.reduce((sum, x) => sum + dealerPrice(x.price) * x.qty, 0);
 
   function notify(message) {
