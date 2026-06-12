@@ -166,6 +166,7 @@ function App() {
   const [currentDealerId, setCurrentDealerId] = useState("");
   const [stores, setStores] = useState([]);
   const [selectedStoreId, setSelectedStoreId] = useState("");
+  const [checkingOut, setCheckingOut] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [authCallback, setAuthCallback] = useState(authTokenFromUrl);
   const [loading, setLoading] = useState(true);
@@ -345,7 +346,12 @@ function App() {
   }
 
   async function checkout() {
-    if (!cart.length) return;
+    if (!cart.length || checkingOut) return;
+    if (!selectedStoreId) {
+      notify("請先選擇收貨門市");
+      return;
+    }
+    setCheckingOut(true);
     const order = { company: user.company, contact: user.name, total: subtotal, items: cart, createdAt: new Date().toISOString() };
     try {
       const result = await api("orders", {
@@ -368,9 +374,12 @@ function App() {
       localStorage.setItem(historyKey(user.company), JSON.stringify(nextHistory));
       notify(`訂單 ${result.orderNo} 已成功送出`);
       setCart([]);
+      await loadAccount({ preserveView: true });
       setView("orders");
     } catch (error) {
       notify(error.message || "訂單送出失敗，採購清單已為您保留");
+    } finally {
+      setCheckingOut(false);
     }
   }
 
@@ -506,7 +515,8 @@ function App() {
               stores={stores.filter(store => store.dealer_id === currentDealerId && store.active)}
               selectedStoreId={selectedStoreId} onSelectStore={setSelectedStoreId}
               onManageStores={() => setView("profile")} onQty={changeQty}
-              onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
+              onRemove={id => setCart(x => x.filter(i => i.id !== id))}
+              onCheckout={checkout} checkingOut={checkingOut} />
           </section>
         </main>
       ) : view === "orders" ? <DocumentCenter company={user.company} orders={orders} sales={sales.filter(s => s.company === user.company)} products={managedProducts} movements={movements.filter(m => m.company === user.company)} settings={channelSettings} />
@@ -1034,7 +1044,7 @@ function FormalSalesImport({ channels, products, movements, sales, onSave }) {
   </div>;
 }
 
-function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores, selectedStoreId, onSelectStore, onManageStores, onQty, onRemove, onCheckout }) {
+function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores, selectedStoreId, onSelectStore, onManageStores, onQty, onRemove, onCheckout, checkingOut }) {
   const selectedStore = stores.find(store => store.id === selectedStoreId);
   return <aside className="purchase-list">
     <div className="list-head"><div><span className="eyebrow">CURRENT ORDER</span><h2>本次採購清單</h2></div><b>{items.length} 項／{totalQty} 件</b></div>
@@ -1059,8 +1069,10 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores
     )}</div>
     <div className="list-footer">
       <div className="summary"><span>採購總計</span><strong>{settings.hideDealerPrice ? "價格另行確認" : money(subtotal)}</strong><small>{discountLabel(settings.discount)}通路價格 · 實際運費與優惠將由專人確認</small></div>
-      <button className="outline" disabled={!items.length} onClick={() => window.print()}><FileDown /> 產生 PDF 採購單</button>
-      <button className="primary checkout" disabled={!items.length || !selectedStoreId} onClick={onCheckout}>確認送出訂單 <ChevronRight /></button>
+      {!items.length ? <div className="checkout-hint">請先在左側輸入商品數量</div> : !selectedStoreId ? <div className="checkout-hint warning">請先選擇收貨門市</div> : null}
+      <button className="primary checkout" disabled={!items.length || !selectedStoreId || checkingOut} onClick={onCheckout}>
+        {checkingOut ? <><RefreshCw className="spin-icon" /> 建立採購單中...</> : <>建立採購單 <ChevronRight /></>}
+      </button>
     </div>
   </aside>;
 }
@@ -1070,22 +1082,23 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
   const productMap = Object.fromEntries(products.map(p => [p.id, p]));
   const stockRows = products.filter(p => stockOf(movements, company, p.id) !== 0);
   const icon = s => s === "已完成" ? <PackageCheck /> : <Truck />;
+  const latestOrder = orders[0];
   return <main className="orders-page document-center">
     <div className="orders-intro"><span className="eyebrow">PARTNER DOCUMENT CENTER</span><h1>單據與進度中心</h1><p>統整採購進度、歷史採購、銷貨單據與目前寄售庫存。</p></div>
     <div className="document-tabs"><button className={tab === "progress" ? "active" : ""} onClick={() => setTab("progress")}>目前進度</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>歷史採購</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>歷史銷貨</button>{settings.mode === "consignment" && <button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>寄售庫存</button>}</div>
-    {tab === "progress" && <>
+    {tab === "progress" && (latestOrder ? <>
     <div className="current-order">
-      <div className="order-top"><div><span>最新訂單</span><h2>DT-20260610-024</h2><small>2026/06/10 14:32 建立 · 共 8 項商品</small></div><span className="status preparing"><Clock3 /> 備貨中</span></div>
+      <div className="order-top"><div><span>最新訂單</span><h2>{latestOrder.id}</h2><small>{latestOrder.date} 建立 · 共 {latestOrder.items} 項商品{latestOrder.shipping?.storeName && ` · 寄送 ${latestOrder.shipping.storeName}`}</small></div><span className="status preparing"><Clock3 /> {latestOrder.status}</span></div>
       <div className="timeline">
-        <div className="done"><i><CheckCircle2 /></i><strong>訂單成立</strong><small>06/10 14:32</small></div>
-        <div className="done"><i><CheckCircle2 /></i><strong>訂單確認</strong><small>06/10 16:05</small></div>
-        <div className="active"><i><PackageCheck /></i><strong>商品備貨</strong><small>預計 06/12 完成</small></div>
+        <div className="done"><i><CheckCircle2 /></i><strong>訂單成立</strong><small>{latestOrder.date}</small></div>
+        <div className={latestOrder.status === "訂單成立" ? "active" : "done"}><i><CheckCircle2 /></i><strong>訂單確認</strong><small>{latestOrder.status === "訂單成立" ? "等待確認" : "已確認"}</small></div>
+        <div className={["備貨中", "已出貨", "已完成"].includes(latestOrder.status) ? "active" : ""}><i><PackageCheck /></i><strong>商品備貨</strong><small>依訂單進度更新</small></div>
         <div><i><Truck /></i><strong>商品出貨</strong><small>等待中</small></div>
         <div><i><ClipboardCheck /></i><strong>訂單完成</strong><small>等待中</small></div>
       </div>
-      <div className="order-total"><span>訂單總金額</span><strong>{money(18760)}</strong><button onClick={() => window.print()}><FileDown /> 下載採購單</button></div>
+      <div className="order-total"><span>訂單總金額</span><strong>{money(latestOrder.amount)}</strong><button onClick={() => window.print()}><FileDown /> 查看／列印採購單</button></div>
     </div>
-    </>}
+    </> : <div className="document-empty">目前尚無採購單，請先前往商品採購建立訂單。</div>)}
     {tab === "orders" && <div className="history document-list"><h2>歷史採購紀錄</h2>{orders.map(o => <div className="history-row" key={o.id}><i>{icon(o.status)}</i><div><strong>{o.id}</strong><small>{o.date} · {o.items} 項商品{o.shipping?.storeName && ` · 寄送 ${o.shipping.storeName}`}</small></div><span className={`status ${o.status === "已完成" ? "complete" : ""}`}>{o.status}</span><strong>{money(o.amount)}</strong><button><FileDown /></button></div>)}</div>}
     {tab === "sales" && <div className="customer-sales document-list"><div className="document-list-heading"><div><h2>歷史銷貨紀錄</h2><p>銷貨單由東瑭行政人員建檔與上傳，通路帳號僅能檢視及下載。</p></div><span><CheckCircle2 /> 唯讀專區</span></div>{sales.length === 0 ? <div className="document-empty">目前沒有銷貨單紀錄</div> : sales.map(doc => <article key={doc.id}><div><span className="status">{doc.status}</span><strong>{doc.id}</strong><small>{doc.month} · {doc.items.reduce((s, i) => s + i.qty, 0)} 件</small></div><strong>{money(doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><div className="document-files">{doc.attachment && <a href={doc.attachment} target="_blank"><FileText /> 檢視客戶原版</a>}{doc.formalAttachment && <a href={doc.formalAttachment.startsWith("http") ? doc.formalAttachment : "#"}><FileDown /> 檢視正式銷貨單</a>}<button onClick={() => window.print()}><FileDown /> 檢視系統格式</button></div></article>)}</div>}
     {tab === "stock" && <div className="customer-stock document-list"><h2>目前寄售庫存</h2><div className="customer-stock-head"><span>SKU</span><span>商品</span><span>目前庫存</span><span>狀態</span></div>{stockRows.map(p => { const qty = stockOf(movements, company, p.id); return <div className="customer-stock-row" key={p.id}><span>{p.sku}</span><strong>{p.name}</strong><b>{qty} 件</b><span className={qty <= 5 ? "low" : ""}>{qty <= 5 ? "建議補貨" : "庫存正常"}</span></div>; })}</div>}

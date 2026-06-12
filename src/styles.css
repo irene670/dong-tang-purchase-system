@@ -49,11 +49,11 @@
 .row-qty svg{width:13px}
 .row-qty input{border:0;border-left:1px solid #d9dbd8;border-right:1px solid #d9dbd8;text-align:center;width:60px;outline:0;font-weight:700;color:var(--green)}
 .row-qty input::-webkit-inner-spin-button{display:none}
-.purchase-list{position:sticky;top:104px;background:#fff;border:1px solid var(--line);max-height:calc(100vh - 125px);display:flex;flex-direction:column}
+.purchase-list{position:sticky;top:104px;background:#fff;border:1px solid var(--line);display:flex;flex-direction:column}
 .list-head{padding:20px 22px;border-bottom:1px solid var(--line);display:flex;align-items:flex-end;justify-content:space-between}
 .list-head h2{font-family:"Shippori Mincho";font-size:22px;margin:5px 0 0}
 .list-head>b{font-size:11px;background:var(--green);color:#fff;padding:7px 9px}
-.list-items{overflow:auto;min-height:220px;max-height:calc(100vh - 430px)}
+.list-items{overflow:visible;min-height:220px}
 .list-item{display:grid;grid-template-columns:48px minmax(0,1fr) 90px 86px 24px;gap:10px;align-items:center;padding:15px 18px;border-bottom:1px solid #ebe9e3}
 .list-item-image{width:48px;height:48px;object-fit:cover;background:#eee;border:1px solid #e1dfd8}
 .list-item>div:nth-child(2){min-width:0}
@@ -66,6 +66,9 @@
 .list-footer .summary{margin-bottom:12px}
 .list-footer .outline,.list-footer .checkout{margin-top:7px}
 .list-footer button:disabled{opacity:.4;cursor:not-allowed}
+.checkout-hint{background:#edf2ef;color:#66736f;padding:10px 12px;margin-top:8px;text-align:center;font-size:11px}
+.checkout-hint.warning{background:#fff0e8;color:#a54a29}
+.spin-icon{animation:spin 1s linear infinite}
 .empty{padding:65px 25px}
 .frequent-empty{text-align:center;padding:75px 25px;color:#7b8480}
 .frequent-empty>svg{width:38px;height:38px;color:var(--orange)}
@@ -93,7 +96,7 @@
   .purchase-workspace{display:flex;flex-direction:column}
   .product-browser,.purchase-list{width:100%}
   .purchase-list{position:static;max-height:none;order:-1}
-  .list-items{max-height:320px}
+  .list-items{max-height:none;overflow:visible}
   .product-table-head,.product-row{grid-template-columns:62px minmax(150px,1fr) 88px 120px}
 }
 @media(max-width:560px){
