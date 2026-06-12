@@ -200,12 +200,17 @@ export default async function handler(req) {
     const route = url.searchParams.get("route") || "bootstrap";
     if (req.method === "GET" && route === "bootstrap") return json(await bootstrap(user));
     const body = req.method === "GET" ? {} : await req.json();
+    const action = body.action || route;
+    console.info("API request", { method: req.method, route, action, userId: user.id });
     if (req.method === "POST" && route === "orders") return createOrder(user, body);
-    if (req.method === "PUT" && route === "dealer-profile") return saveDealerProfile(user, body);
-    if (req.method === "POST" && route === "stores") return saveStore(user, body);
-    if (req.method === "PUT" && route === "stores") return saveStore(user, body);
+    if (["saveDealerProfile", "dealer-profile"].includes(action) && ["POST", "PUT"].includes(req.method)) {
+      return saveDealerProfile(user, body);
+    }
+    if (["saveStore", "stores"].includes(action) && ["POST", "PUT"].includes(req.method)) {
+      return saveStore(user, body);
+    }
     if (req.method === "PUT" && route === "settings") return saveSettings(user, body);
-    return json({ error: "Not found" }, 404);
+    return json({ error: `找不到 API 動作：${req.method} ${route} (${action})` }, 404);
   } catch (error) {
     console.error(error);
     return json({ error: error.message || "Server error" }, 500);

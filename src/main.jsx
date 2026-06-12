@@ -409,7 +409,10 @@ function App() {
   }
 
   async function saveProfile(dealerId, profile) {
-    const result = await api("dealer-profile", { method: "PUT", body: JSON.stringify({ dealerId, profile }) });
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "saveDealerProfile", dealerId, profile })
+    });
     setDealerRecords(rows => rows.map(row => row.id === result.dealer.id ? result.dealer : row));
     if (!admin && result.dealer.id === currentDealerId) {
       setUser(previous => ({ ...previous, company: result.dealer.company_name }));
@@ -419,7 +422,10 @@ function App() {
   }
 
   async function saveStore(dealerId, store) {
-    const result = await api("stores", { method: store.id ? "PUT" : "POST", body: JSON.stringify({ dealerId, store }) });
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "saveStore", dealerId, store })
+    });
     await loadAccount({ preserveView: true });
     notify(store.id ? "門市資料已更新" : "門市已新增");
     return result.store;
