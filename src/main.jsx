@@ -163,6 +163,7 @@ function App() {
   const [sales, setSales] = useState(() => JSON.parse(localStorage.getItem("dt-sales") || "null") || defaultSales);
   const [orders, setOrders] = useState([]);
   const [dealerRecords, setDealerRecords] = useState([]);
+  const [currentDealerId, setCurrentDealerId] = useState("");
   const [stores, setStores] = useState([]);
   const [selectedStoreId, setSelectedStoreId] = useState("");
   const [authLoading, setAuthLoading] = useState(true);
@@ -200,12 +201,18 @@ function App() {
       ...options,
       headers: { "Content-Type": "application/json", ...(options.headers || {}) }
     });
-    const result = await response.json();
+    const text = await response.text();
+    let result;
+    try {
+      result = text ? JSON.parse(text) : {};
+    } catch {
+      throw new Error(`伺服器回應異常（${response.status}），請稍後再試`);
+    }
     if (!response.ok) throw new Error(result.error || "系統連線失敗");
     return result;
   }
 
-  async function loadAccount() {
+  async function loadAccount({ preserveView = false } = {}) {
     const data = await api("bootstrap");
     const dealer = data.dealer;
     const nextChannels = Object.fromEntries(data.dealers.map(row => [row.company_name, {
@@ -251,6 +258,7 @@ function App() {
     }));
     setAdmin(data.admin);
     setUser({ company: data.admin ? "東瑭管理員" : dealer.company_name, name: data.user.name, email: data.user.email });
+    setCurrentDealerId(dealer.id);
     setContent(prev => ({ ...prev, ...data.content }));
     setProductEdits(nextEdits);
     setChannels(nextChannels);
@@ -274,7 +282,7 @@ function App() {
       history[item.product_id] = { orderCount: previous.orderCount + 1, totalQty: previous.totalQty + item.quantity };
     });
     setPurchaseHistory(history);
-    setView(data.admin ? "admin" : "home");
+    if (!preserveView) setView(data.admin ? "admin" : "home");
   }
 
   const managedProducts = products.map(p => ({
@@ -361,8 +369,8 @@ function App() {
       notify(`訂單 ${result.orderNo} 已成功送出`);
       setCart([]);
       setView("orders");
-    } catch {
-      notify("訂單送出失敗，採購清單已為您保留");
+    } catch (error) {
+      notify(error.message || "訂單送出失敗，採購清單已為您保留");
     }
   }
 
@@ -401,15 +409,20 @@ function App() {
   }
 
   async function saveProfile(dealerId, profile) {
-    await api("dealer-profile", { method: "PUT", body: JSON.stringify({ dealerId, profile }) });
-    await loadAccount();
+    const result = await api("dealer-profile", { method: "PUT", body: JSON.stringify({ dealerId, profile }) });
+    setDealerRecords(rows => rows.map(row => row.id === result.dealer.id ? result.dealer : row));
+    if (!admin && result.dealer.id === currentDealerId) {
+      setUser(previous => ({ ...previous, company: result.dealer.company_name }));
+    }
     notify("廠商資料已儲存");
+    return result.dealer;
   }
 
   async function saveStore(dealerId, store) {
-    await api("stores", { method: store.id ? "PUT" : "POST", body: JSON.stringify({ dealerId, store }) });
-    await loadAccount();
+    const result = await api("stores", { method: store.id ? "PUT" : "POST", body: JSON.stringify({ dealerId, store }) });
+    await loadAccount({ preserveView: true });
     notify(store.id ? "門市資料已更新" : "門市已新增");
+    return result.store;
   }
 
   if (authLoading) return <div className="loading-screen"><RefreshCw /> 正在確認登入狀態...</div>;
@@ -426,8 +439,8 @@ function App() {
         <button className="mobile-menu" onClick={() => setMobileNav(!mobileNav)}><Menu /></button>
         <nav className={mobileNav ? "open" : ""}>
           {!admin && <button className={view === "home" ? "active" : ""} onClick={() => { setView("home"); setMobileNav(false); }}>夥伴首頁</button>}
-          <button className={view === "shop" ? "active" : ""} onClick={() => { setView("shop"); setMobileNav(false); }}>商品採購</button>
-          <button className={view === "orders" ? "active" : ""} onClick={() => { setView("orders"); setMobileNav(false); }}>單據與進度</button>
+          {!admin && <button className={view === "shop" ? "active" : ""} onClick={() => { setView("shop"); setMobileNav(false); }}>商品採購</button>}
+          {!admin && <button className={view === "orders" ? "active" : ""} onClick={() => { setView("orders"); setMobileNav(false); }}>單據與進度</button>}
           <button className={view === "profile" ? "active" : ""} onClick={() => { setView("profile"); setMobileNav(false); }}>廠商資料</button>
           {admin && <button className={view === "admin" ? "active" : ""} onClick={() => { setView("admin"); setMobileNav(false); }}>內容管理</button>}
           <a href="https://eavo.com.tw/" target="_blank">品牌官網</a>
@@ -484,7 +497,7 @@ function App() {
             )}
             </div>
             <PurchaseList items={cart} subtotal={subtotal} totalQty={totalQty} dealerPrice={dealerPrice} settings={channelSettings}
-              stores={stores.filter(store => store.dealer_id === dealerRecords.find(row => row.company_name === user.company)?.id && store.active)}
+              stores={stores.filter(store => store.dealer_id === currentDealerId && store.active)}
               selectedStoreId={selectedStoreId} onSelectStore={setSelectedStoreId}
               onManageStores={() => setView("profile")} onQty={changeQty}
               onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
@@ -626,6 +639,9 @@ function DealerProfileManager({ admin, currentCompany, dealers, stores, onSavePr
   const dealer = dealers.find(row => row.id === dealerId) || initialDealer;
   const [profile, setProfile] = useState({});
   const [storeDraft, setStoreDraft] = useState(emptyStore);
+  const [message, setMessage] = useState(null);
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingStore, setSavingStore] = useState(false);
   const dealerStores = stores.filter(store => store.dealer_id === dealer?.id);
 
   useEffect(() => {
@@ -640,6 +656,7 @@ function DealerProfileManager({ admin, currentCompany, dealers, stores, onSavePr
       billingEmail: dealer.billing_email || dealer.email || ""
     });
     setStoreDraft({ ...emptyStore, companyName: dealer.company_name || "" });
+    setMessage(null);
   }, [dealer?.id]);
 
   function editStore(store) {
@@ -657,6 +674,50 @@ function DealerProfileManager({ admin, currentCompany, dealers, stores, onSavePr
       isDefault: store.is_default,
       active: store.active
     });
+    setMessage(null);
+  }
+
+  async function submitProfile() {
+    if (!profile.companyName?.trim()) {
+      setMessage({ type: "error", text: "請填寫總部公司名稱。" });
+      return;
+    }
+    setSavingProfile(true);
+    setMessage(null);
+    try {
+      await onSaveProfile(dealer.id, profile);
+      setMessage({ type: "success", text: "廠商資料已儲存。" });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "廠商資料儲存失敗。" });
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function submitStore() {
+    const required = [
+      ["門市顯示名稱", storeDraft.storeName],
+      ["實際廠商／公司名稱", storeDraft.companyName],
+      ["完整收貨地址", storeDraft.address],
+      ["收件人", storeDraft.recipientName],
+      ["收件電話", storeDraft.recipientPhone]
+    ];
+    const missing = required.filter(([, value]) => !value?.trim()).map(([label]) => label);
+    if (missing.length) {
+      setMessage({ type: "error", text: `請填寫：${missing.join("、")}。` });
+      return;
+    }
+    setSavingStore(true);
+    setMessage(null);
+    try {
+      await onSaveStore(dealer.id, storeDraft);
+      setMessage({ type: "success", text: storeDraft.id ? "門市資料已更新。" : "門市已新增，可於採購單選擇此收貨地點。" });
+      setStoreDraft({ ...emptyStore, companyName: profile.companyName || dealer.company_name });
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "門市資料儲存失敗。" });
+    } finally {
+      setSavingStore(false);
+    }
   }
 
   if (!dealer) return <main className="profile-page"><div className="document-empty">尚未建立經銷商資料</div></main>;
@@ -665,8 +726,9 @@ function DealerProfileManager({ admin, currentCompany, dealers, stores, onSavePr
       <div><span className="eyebrow">PARTNER ORGANIZATION</span><h1>廠商與門市管理</h1><p>維護總部開票資料、門市收貨地址與聯絡資訊。</p></div>
       {admin && <label>代管經銷商<select value={dealer.id} onChange={e => setDealerId(e.target.value)}>{dealers.map(row => <option value={row.id} key={row.id}>{row.company_name}</option>)}</select></label>}
     </section>
+    {message && <div className={`profile-message ${message.type}`}>{message.type === "success" && <CheckCircle2 />}{message.text}</div>}
     <section className="profile-card">
-      <div className="profile-card-title"><div><h2>總部／廠商資料</h2><p>這些資料用於帳務聯繫與正式單據。</p></div><button className="primary" onClick={() => onSaveProfile(dealer.id, profile)}><Save /> 儲存廠商資料</button></div>
+      <div className="profile-card-title"><div><h2>總部／廠商資料</h2><p>這些資料用於帳務聯繫與正式單據。</p></div><button className="primary" disabled={savingProfile} onClick={submitProfile}><Save /> {savingProfile ? "儲存中..." : "儲存廠商資料"}</button></div>
       <div className="profile-grid">
         <ProfileInput label="總部公司名稱" value={profile.companyName} onChange={v => setProfile({ ...profile, companyName: v })} />
         <ProfileInput label="統一編號" value={profile.taxId} onChange={v => setProfile({ ...profile, taxId: v })} />
@@ -697,7 +759,7 @@ function DealerProfileManager({ admin, currentCompany, dealers, stores, onSavePr
           <ProfileInput label="門市 Email" value={storeDraft.recipientEmail} onChange={v => setStoreDraft({ ...storeDraft, recipientEmail: v })} />
           <ProfileInput label="配送備註" value={storeDraft.deliveryNote} onChange={v => setStoreDraft({ ...storeDraft, deliveryNote: v })} area />
           <div className="store-checks"><label><input type="checkbox" checked={storeDraft.isDefault} onChange={e => setStoreDraft({ ...storeDraft, isDefault: e.target.checked })} /> 設為預設收貨門市</label>{storeDraft.id && <label><input type="checkbox" checked={storeDraft.active} onChange={e => setStoreDraft({ ...storeDraft, active: e.target.checked })} /> 啟用此門市</label>}</div>
-          <div className="store-form-actions">{storeDraft.id && <button onClick={() => setStoreDraft({ ...emptyStore, companyName: dealer.company_name })}>取消編輯</button>}<button className="primary" onClick={() => onSaveStore(dealer.id, storeDraft)}><Save /> {storeDraft.id ? "更新門市" : "新增門市"}</button></div>
+          <div className="store-form-actions">{storeDraft.id && <button onClick={() => { setStoreDraft({ ...emptyStore, companyName: profile.companyName || dealer.company_name }); setMessage(null); }}>取消編輯</button>}<button className="primary" disabled={savingStore} onClick={submitStore}><Save /> {savingStore ? "儲存中..." : storeDraft.id ? "更新門市" : "新增門市"}</button></div>
         </div>
       </div>
     </section>

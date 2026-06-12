@@ -131,7 +131,10 @@ async function saveStore(user, body) {
       || !store.recipientName?.trim() || !store.recipientPhone?.trim()) {
     return json({ error: "請填寫門市名稱、廠商名稱、地址、收件人與電話" }, 400);
   }
-  if (store.isDefault) {
+  const existingStores = await db.sql`
+    SELECT id FROM dealer_stores WHERE dealer_id=${dealerId} AND active=true LIMIT 1`;
+  const shouldBeDefault = Boolean(store.isDefault) || (!store.id && !existingStores.length);
+  if (shouldBeDefault) {
     await db.sql`UPDATE dealer_stores SET is_default=false, updated_at=now() WHERE dealer_id=${dealerId}`;
   }
   let rows;
@@ -141,7 +144,7 @@ async function saveStore(user, body) {
         tax_id=${store.taxId?.trim() || ''}, postal_code=${store.postalCode?.trim() || ''},
         address=${store.address.trim()}, recipient_name=${store.recipientName.trim()},
         recipient_phone=${store.recipientPhone.trim()}, recipient_email=${store.recipientEmail?.trim() || ''},
-        delivery_note=${store.deliveryNote?.trim() || ''}, is_default=${Boolean(store.isDefault)},
+        delivery_note=${store.deliveryNote?.trim() || ''}, is_default=${shouldBeDefault},
         active=${store.active !== false}, updated_at=now()
       WHERE id=${store.id} AND dealer_id=${dealerId} RETURNING *`;
   } else {
@@ -151,7 +154,7 @@ async function saveStore(user, body) {
       VALUES (${dealerId}, ${store.storeName.trim()}, ${store.companyName.trim()}, ${store.taxId?.trim() || ''},
         ${store.postalCode?.trim() || ''}, ${store.address.trim()}, ${store.recipientName.trim()},
         ${store.recipientPhone.trim()}, ${store.recipientEmail?.trim() || ''},
-        ${store.deliveryNote?.trim() || ''}, ${Boolean(store.isDefault)}) RETURNING *`;
+        ${store.deliveryNote?.trim() || ''}, ${shouldBeDefault}) RETURNING *`;
   }
   if (!rows.length) return json({ error: "找不到門市或沒有修改權限" }, 404);
   return json({ ok: true, store: rows[0] });
