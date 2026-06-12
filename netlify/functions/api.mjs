@@ -1,5 +1,5 @@
 import { getDatabase } from "@netlify/database";
-import { getUser } from "@netlify/identity";
+import { admin as identityAdmin, getUser } from "@netlify/identity";
 
 const db = getDatabase();
 const json = (data, status = 200) => Response.json(data, { status });
@@ -160,6 +160,54 @@ async function saveStore(user, body) {
   return json({ ok: true, store: rows[0] });
 }
 
+async function createDealerAccount(user, body) {
+  if (!isAdmin(user)) return json({ error: "只有管理員可以建立經銷商帳號" }, 403);
+  const account = body.account || {};
+  const email = account.email?.trim().toLowerCase();
+  const companyName = account.companyName?.trim();
+  const contactName = account.contactName?.trim();
+  const password = String(account.password || "");
+  const discount = Number(account.discount);
+  if (!email || !companyName || !contactName || !password) {
+    return json({ error: "請填寫 Email、公司名稱、聯絡人與初始密碼" }, 400);
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ error: "Email 格式不正確" }, 400);
+  if (password.length < 8) return json({ error: "初始密碼至少需要 8 個字元" }, 400);
+  if (!["buyout", "consignment"].includes(account.mode)) return json({ error: "經銷模式不正確" }, 400);
+  if (!Number.isFinite(discount) || discount < 1 || discount > 100) {
+    return json({ error: "經銷折數必須介於 1% 至 100%" }, 400);
+  }
+  const existing = await db.sql`SELECT id FROM dealers WHERE email=${email}`;
+  if (existing.length) return json({ error: "此 Email 已經有經銷商帳號" }, 409);
+
+  let identityUser;
+  try {
+    identityUser = await identityAdmin.createUser({
+      email,
+      password,
+      data: {
+        role: "dealer",
+        app_metadata: { roles: ["dealer"] },
+        user_metadata: { full_name: contactName, company: companyName }
+      }
+    });
+    const rows = await db.sql`
+      INSERT INTO dealers (identity_user_id, email, company_name, contact_name, mode,
+        discount_percent, hide_dealer_price, phone, billing_email)
+      VALUES (${identityUser.id}, ${email}, ${companyName}, ${contactName}, ${account.mode},
+        ${discount}, ${Boolean(account.hideDealerPrice)}, ${account.phone?.trim() || ''}, ${email})
+      RETURNING *`;
+    return json({ ok: true, dealer: rows[0], identityUserId: identityUser.id });
+  } catch (error) {
+    if (identityUser?.id) {
+      await identityAdmin.deleteUser(identityUser.id).catch(() => {});
+    }
+    const message = String(error?.message || "");
+    if (message.toLowerCase().includes("already")) return json({ error: "此 Email 已存在於登入系統" }, 409);
+    throw error;
+  }
+}
+
 async function saveSettings(user, body) {
   if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
   await db.sql`
@@ -209,10 +257,21 @@ export default async function handler(req) {
     if (["saveStore", "stores"].includes(action) && ["POST", "PUT"].includes(req.method)) {
       return saveStore(user, body);
     }
+    if (action === "createDealerAccount" && req.method === "POST") {
+      return createDealerAccount(user, body);
+    }
     if (req.method === "PUT" && route === "settings") return saveSettings(user, body);
     return json({ error: `找不到 API 動作：${req.method} ${route} (${action})` }, 404);
   } catch (error) {
     console.error(error);
-    return json({ error: error.message || "Server error" }, 500);
+    const message = String(error?.message || "");
+    const databaseUnavailable = message.includes("Failed query")
+      || message.includes("does not exist")
+      || message.includes("ECONNREFUSED");
+    return json({
+      error: databaseUnavailable
+        ? "資料庫尚未準備完成，請確認本地 Netlify 服務與 migration 已啟動。"
+        : message || "伺服器發生錯誤，請稍後再試。"
+    }, 500);
   }
 }

@@ -440,6 +440,16 @@ function App() {
     return result.store;
   }
 
+  async function createDealerAccount(account) {
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "createDealerAccount", account })
+    });
+    await loadAccount({ preserveView: true });
+    notify(`經銷商帳號 ${account.email} 已建立`);
+    return result;
+  }
+
   if (authLoading) return <div className="loading-screen"><RefreshCw /> 正在確認登入狀態...</div>;
   if (authCallback) return <SetPassword mode={authCallback.type} onSubmit={completePassword} />;
   if (!user) return <Login onLogin={login} />;
@@ -521,7 +531,9 @@ function App() {
         </main>
       ) : view === "orders" ? <DocumentCenter company={user.company} orders={orders} sales={sales.filter(s => s.company === user.company)} products={managedProducts} movements={movements.filter(m => m.company === user.company)} settings={channelSettings} />
         : view === "profile" ? <DealerProfileManager admin={admin} currentCompany={user.company} dealers={dealerRecords} stores={stores} onSaveProfile={saveProfile} onSaveStore={saveStore} />
-        : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels} movements={movements} sales={sales} onSave={saveAdmin} onSaveInventory={saveInventory} />}
+        : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels}
+          dealers={dealerRecords} movements={movements} sales={sales} onSave={saveAdmin}
+          onSaveInventory={saveInventory} onCreateDealerAccount={createDealerAccount} />}
 
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
     </div>
@@ -782,11 +794,11 @@ function DealerProfileManager({ admin, currentCompany, dealers, stores, onSavePr
   </main>;
 }
 
-function ProfileInput({ label, value = "", onChange, area, className = "" }) {
-  return <label className={`profile-input ${className}`}><span>{label}</span>{area ? <textarea value={value} onChange={e => onChange(e.target.value)} /> : <input value={value} onChange={e => onChange(e.target.value)} />}</label>;
+function ProfileInput({ label, value = "", onChange, area, className = "", type = "text" }) {
+  return <label className={`profile-input ${className}`}><span>{label}</span>{area ? <textarea value={value} onChange={e => onChange(e.target.value)} /> : <input type={type} value={value} onChange={e => onChange(e.target.value)} />}</label>;
 }
 
-function AdminPanel({ content, products, productEdits, channels, movements, sales, onSave, onSaveInventory }) {
+function AdminPanel({ content, products, productEdits, channels, dealers, movements, sales, onSave, onSaveInventory, onCreateDealerAccount }) {
   const [tab, setTab] = useState("home");
   const [draft, setDraft] = useState(content);
   const [edits, setEdits] = useState(productEdits);
@@ -800,7 +812,7 @@ function AdminPanel({ content, products, productEdits, channels, movements, sale
     <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">帳號、內容、訂單與正式營運資料由 Netlify Identity 及 Netlify Database 集中管理。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><UserRound /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
+      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
       <section className="admin-content">
         {tab === "home" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
@@ -817,7 +829,7 @@ function AdminPanel({ content, products, productEdits, channels, movements, sale
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "products" ? <div className="admin-products">
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "products" ? <div className="admin-products">
           <div className="admin-product-head"><span>顯示</span><span>商品</span><span>名稱／狀態</span><span>分類</span><span>售價</span></div>
           {products.map(product => {
             const value = { ...product, badges: defaultBadges[product.id] || [], ...(edits[product.id] || {}) };
@@ -847,6 +859,50 @@ function ProductBadges({ badges = [] }) {
     const badge = productBadgeOptions.find(option => option.key === key);
     return badge ? <span className={`product-badge ${key}`} key={key}>{badge.label}</span> : null;
   })}</span>;
+}
+
+function DealerAccountManager({ dealers, onCreate }) {
+  const initial = { email: "", companyName: "", contactName: "", phone: "", password: "", confirmPassword: "", mode: "buyout", discount: 70, hideDealerPrice: false };
+  const [form, setForm] = useState(initial);
+  const [message, setMessage] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const realDealers = dealers.filter(row => !row.email.endsWith("@eavo.invalid"));
+
+  async function submit() {
+    if (form.password !== form.confirmPassword) {
+      setMessage({ type: "error", text: "兩次輸入的初始密碼不一致。" });
+      return;
+    }
+    setSaving(true);
+    setMessage(null);
+    try {
+      await onCreate(form);
+      setMessage({ type: "success", text: `帳號 ${form.email} 已建立，可立即登入。請使用安全方式將初始密碼交給經銷商。` });
+      setForm(initial);
+    } catch (error) {
+      setMessage({ type: "error", text: error.message || "帳號建立失敗。" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="dealer-accounts">
+    <div className="account-create-head"><div><h2>手動建立經銷商帳號</h2><p>建立後帳號會自動啟用，不需寄送邀請信。</p></div><b>{realDealers.length} 個登入帳號</b></div>
+    {message && <div className={`profile-message ${message.type}`}>{message.type === "success" && <CheckCircle2 />}{message.text}</div>}
+    <div className="account-create-form">
+      <ProfileInput label="登入 Email *" value={form.email} onChange={v => setForm({ ...form, email: v })} />
+      <ProfileInput label="公司名稱 *" value={form.companyName} onChange={v => setForm({ ...form, companyName: v })} />
+      <ProfileInput label="主要聯絡人 *" value={form.contactName} onChange={v => setForm({ ...form, contactName: v })} />
+      <ProfileInput label="聯絡電話" value={form.phone} onChange={v => setForm({ ...form, phone: v })} />
+      <ProfileInput label="初始密碼 *" type="password" value={form.password} onChange={v => setForm({ ...form, password: v })} />
+      <ProfileInput label="再次輸入密碼 *" type="password" value={form.confirmPassword} onChange={v => setForm({ ...form, confirmPassword: v })} />
+      <label className="profile-input"><span>經銷模式</span><select value={form.mode} onChange={e => setForm({ ...form, mode: e.target.value })}><option value="buyout">買斷</option><option value="consignment">寄售</option></select></label>
+      <label className="profile-input"><span>經銷折數百分比</span><input type="number" min="1" max="100" value={form.discount} onChange={e => setForm({ ...form, discount: Number(e.target.value) })} /></label>
+      <label className="account-checkbox"><input type="checkbox" checked={form.hideDealerPrice} onChange={e => setForm({ ...form, hideDealerPrice: e.target.checked })} /> 前台不顯示經銷價</label>
+      <button className="primary account-create-button" disabled={saving} onClick={submit}>{saving ? <><RefreshCw className="spin-icon" /> 建立中...</> : <><Plus /> 建立並啟用帳號</>}</button>
+    </div>
+    <div className="account-list"><h3>已建立的經銷商</h3>{realDealers.map(row => <div key={row.id}><div><strong>{row.company_name}</strong><small>{row.email} · {row.contact_name || "未填聯絡人"}</small></div><span>{row.mode === "consignment" ? "寄售" : "買斷"} · {discountLabel(row.discount_percent)}</span><b className={row.active ? "active" : ""}>{row.active ? "啟用" : "停用"}</b></div>)}</div>
+  </div>;
 }
 
 function AdminField({ label, value, onChange, area, icon }) {

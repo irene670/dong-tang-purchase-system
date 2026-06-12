@@ -234,6 +234,16 @@
 .admin-menu button.active{background:#fff;color:var(--green)}
 .admin-menu svg{width:18px}
 .admin-content{background:#fff;border:1px solid var(--line);padding:30px}
+.account-create-head{display:flex;align-items:flex-start;justify-content:space-between;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:22px}
+.account-create-head h2{font-family:"Shippori Mincho";margin:0 0 6px}.account-create-head p{margin:0;color:#7e8581;font-size:12px}
+.account-create-form{display:grid;grid-template-columns:1fr 1fr;gap:16px;background:#f3f2ed;padding:22px}
+.account-create-form select{width:100%;border:1px solid #cfd2cf;background:#fff;padding:11px}
+.account-checkbox{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
+.account-create-button{align-self:end}
+.account-list{margin-top:25px}.account-list h3{font-family:"Shippori Mincho"}
+.account-list>div{display:grid;grid-template-columns:minmax(260px,1fr) 160px 70px;gap:15px;align-items:center;border-bottom:1px solid var(--line);padding:14px 10px;font-size:12px}
+.account-list strong,.account-list small{display:block}.account-list small{color:#888;margin-top:4px}
+.account-list b{color:#999}.account-list b.active{color:#267157}
 .admin-form{display:grid;grid-template-columns:1fr 1fr;gap:20px}
 .admin-form h2{grid-column:1/-1;font-family:"Shippori Mincho";border-bottom:1px solid var(--line);padding-bottom:10px;margin:18px 0 0}
 .admin-field{display:block}
@@ -352,6 +362,7 @@
   .admin-layout{grid-template-columns:1fr}
   .admin-menu{position:static;display:flex}
   .admin-form{grid-template-columns:1fr}
+  .account-create-form{grid-template-columns:1fr}
   .admin-form h2{grid-column:auto}
   .admin-products{overflow:auto}
   .admin-product-head,.admin-product-row{min-width:780px}
