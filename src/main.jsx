@@ -531,7 +531,14 @@ function SetPassword({ mode, onSubmit }) {
     try {
       await onSubmit(password);
     } catch (err) {
-      setError(err.message || "連結可能已過期，請重新寄送邀請信");
+      const message = String(err?.message || "");
+      if (message.toLowerCase().includes("user not found")) {
+        setError(mode === "recovery"
+          ? "此帳號尚未完成邀請，不能使用忘記密碼。請由管理員重新寄送邀請信，並點邀請信中的連結建立密碼。"
+          : "找不到這筆邀請，可能已被刪除或連結已失效。請由管理員重新邀請此帳號。");
+      } else {
+        setError(message || (mode === "invite" ? "邀請連結可能已過期，請重新寄送邀請信" : "密碼重設連結可能已過期，請重新申請"));
+      }
       setSubmitting(false);
     }
   }
