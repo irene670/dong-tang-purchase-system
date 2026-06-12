@@ -1,5 +1,6 @@
 import { getDatabase } from "@netlify/database";
 import { admin as identityAdmin, getUser } from "@netlify/identity";
+import { calculatePricing, normalizePricingSettings } from "../../shared/pricing.mjs";
 
 const db = getDatabase();
 const json = (data, status = 200) => Response.json(data, { status });
@@ -90,19 +91,24 @@ async function createOrder(user, body) {
     deliveryNote: store.delivery_note
   };
   const orderNo = `DT-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${String(Date.now()).slice(-5)}`;
-  const total = body.items.reduce((sum, item) => sum + Number(item.dealerPrice) * Number(item.qty), 0);
+  const pricing = calculatePricing(body.items, dealer);
   const orders = await db.sql`
-    INSERT INTO orders (order_no, dealer_id, contact_name, total_amount, store_id, shipping_snapshot)
-    VALUES (${orderNo}, ${dealer.id}, ${body.contact || dealer.contact_name}, ${total},
-      ${store.id}, ${JSON.stringify(shippingSnapshot)}::jsonb) RETURNING *`;
-  for (const item of body.items) {
+    INSERT INTO orders (order_no, dealer_id, contact_name, total_amount, pre_tax_amount,
+      tax_amount, retail_total, pricing_snapshot, store_id, shipping_snapshot)
+    VALUES (${orderNo}, ${dealer.id}, ${body.contact || dealer.contact_name}, ${pricing.total},
+      ${pricing.preTaxTotal}, ${pricing.taxTotal}, ${pricing.retailTotal},
+      ${JSON.stringify(pricing.settings)}::jsonb, ${store.id}, ${JSON.stringify(shippingSnapshot)}::jsonb)
+    RETURNING *`;
+  for (const item of pricing.lines) {
     await db.sql`
       INSERT INTO order_items
-        (order_id, product_id, sku, product_name, image_url, retail_price, dealer_price, quantity)
+        (order_id, product_id, sku, product_name, image_url, retail_price, dealer_price, quantity,
+          pre_tax_amount, tax_amount, line_total)
       VALUES (${orders[0].id}, ${Number(item.id)}, ${String(item.sku)}, ${item.name},
-        ${item.image || null}, ${Number(item.price)}, ${Number(item.dealerPrice)}, ${Number(item.qty)})`;
+        ${item.image || null}, ${item.price}, ${item.unitPrice}, ${item.qty},
+        ${item.preTax}, ${item.tax}, ${item.total})`;
   }
-  return json({ ok: true, orderNo });
+  return json({ ok: true, orderNo, pricing });
 }
 
 async function saveDealerProfile(user, body) {
@@ -225,16 +231,24 @@ async function saveSettings(user, body) {
         visible=EXCLUDED.visible, updated_at=now()`;
   }
   for (const [company, settings] of Object.entries(body.channels || {})) {
+    const pricing = normalizePricingSettings(settings);
     await db.sql`
-      INSERT INTO dealers (email, company_name, mode, discount_percent, hide_dealer_price)
+      INSERT INTO dealers (email, company_name, mode, discount_percent, hide_dealer_price,
+        tax_mode, tax_rate, calculation_scope, rounding_mode, rounding_digits)
       VALUES (${`pending+${encodeURIComponent(company)}@eavo.invalid`}, ${company}, ${settings.mode},
-        ${Number(settings.discount)}, ${Boolean(settings.hideDealerPrice)})
+        ${pricing.discount}, ${Boolean(settings.hideDealerPrice)}, ${pricing.taxMode},
+        ${pricing.taxRate}, ${pricing.calculationScope}, ${pricing.roundingMode}, ${pricing.roundingDigits})
       ON CONFLICT (email) DO UPDATE SET company_name=EXCLUDED.company_name, mode=EXCLUDED.mode,
         discount_percent=EXCLUDED.discount_percent, hide_dealer_price=EXCLUDED.hide_dealer_price,
+        tax_mode=EXCLUDED.tax_mode, tax_rate=EXCLUDED.tax_rate,
+        calculation_scope=EXCLUDED.calculation_scope, rounding_mode=EXCLUDED.rounding_mode,
+        rounding_digits=EXCLUDED.rounding_digits,
         updated_at=now()`;
     await db.sql`
-      UPDATE dealers SET mode=${settings.mode}, discount_percent=${Number(settings.discount)},
-        hide_dealer_price=${Boolean(settings.hideDealerPrice)}, updated_at=now()
+      UPDATE dealers SET mode=${settings.mode}, discount_percent=${pricing.discount},
+        hide_dealer_price=${Boolean(settings.hideDealerPrice)}, tax_mode=${pricing.taxMode},
+        tax_rate=${pricing.taxRate}, calculation_scope=${pricing.calculationScope},
+        rounding_mode=${pricing.roundingMode}, rounding_digits=${pricing.roundingDigits}, updated_at=now()
       WHERE company_name=${company}`;
   }
   return json({ ok: true });

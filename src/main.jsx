@@ -11,6 +11,7 @@ import {
   LayoutDashboard, Save, Image
   , Warehouse, FileText, History, SlidersHorizontal, Upload
 } from "lucide-react";
+import { calculatePricing, normalizePricingSettings, pricingDescription } from "../shared/pricing.mjs";
 import "./styles.css";
 
 const STORE_API = "https://eavo.com.tw/wp-json/wc/store/v1";
@@ -67,9 +68,9 @@ const defaultBadges = {
 };
 
 const defaultChannels = {
-  "好日子設計有限公司": { mode: "consignment", discount: 65, hideDealerPrice: false },
-  "誠品生活": { mode: "buyout", discount: 60, hideDealerPrice: false },
-  "測試通路": { mode: "consignment", discount: 70, hideDealerPrice: true }
+  "好日子設計有限公司": { mode: "consignment", discount: 65, hideDealerPrice: false, taxMode: "included", taxRate: 5, calculationScope: "line", roundingMode: "round", roundingDigits: 0 },
+  "誠品生活": { mode: "buyout", discount: 60, hideDealerPrice: false, taxMode: "included", taxRate: 5, calculationScope: "line", roundingMode: "round", roundingDigits: 0 },
+  "測試通路": { mode: "consignment", discount: 70, hideDealerPrice: true, taxMode: "included", taxRate: 5, calculationScope: "line", roundingMode: "round", roundingDigits: 0 }
 };
 
 function loadChannels() {
@@ -77,7 +78,8 @@ function loadChannels() {
   return Object.fromEntries(Object.entries(stored).map(([name, value]) => [name, {
     mode: value.mode || defaultChannels[name]?.mode || "buyout",
     discount: value.discount ?? 100,
-    hideDealerPrice: Boolean(value.hideDealerPrice)
+    hideDealerPrice: Boolean(value.hideDealerPrice),
+    ...normalizePricingSettings(value)
   }]));
 }
 
@@ -141,6 +143,25 @@ async function uploadSalesFile(file) {
 
 const money = n => `NT$ ${Number(n).toLocaleString("zh-TW")}`;
 const discountLabel = value => `${Number(value) / 10} 折`;
+
+function downloadReconciliation(doc, settings) {
+  const hasRetailPrices = doc.items.every(item => item.retailPrice != null);
+  const pricingSettings = hasRetailPrices ? (doc.pricing || settings) : { ...(doc.pricing || settings), discount: 100 };
+  const pricing = calculatePricing(doc.items.map(item => ({ ...item, price: item.retailPrice ?? item.price })), pricingSettings);
+  const rows = [
+    ["銷貨單號", doc.id], ["經銷商", doc.company], ["銷貨月份", doc.month], ["銷貨日期", doc.date],
+    ["計價規則", pricingDescription(pricing.settings)], [],
+    ["SKU", "商品名稱", "數量", "單價", "未稅小計", "稅額", "含稅小計"],
+    ...pricing.lines.map(line => [line.sku || "", line.name || "", line.qty, line.unitPrice, line.preTax, line.tax, line.total]),
+    [], ["", "", "", "合計", pricing.preTaxTotal, pricing.taxTotal, pricing.total]
+  ];
+  const csv = "\ufeff" + rows.map(row => row.map(value => `"${String(value ?? "").replaceAll('"', '""')}"`).join(",")).join("\n");
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  link.download = `${doc.id}_發票對帳明細.csv`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
 
 function authTokenFromUrl() {
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -219,7 +240,8 @@ function App() {
     const nextChannels = Object.fromEntries(data.dealers.map(row => [row.company_name, {
       mode: row.mode,
       discount: row.discount_percent,
-      hideDealerPrice: row.hide_dealer_price
+      hideDealerPrice: row.hide_dealer_price,
+      ...normalizePricingSettings(row)
     }]));
     const nextEdits = Object.fromEntries(data.productOverrides.map(row => [row.product_id, {
       name: row.name,
@@ -249,6 +271,10 @@ function App() {
       note: row.note,
       attachment: row.original_attachment_url,
       formalAttachment: row.formal_attachment_url,
+      pricing: row.pricing_snapshot,
+      preTaxAmount: row.pre_tax_amount,
+      taxAmount: row.tax_amount,
+      totalAmount: row.total_amount,
       items: row.items.map(item => ({
         productId: Number(item.product_id),
         sku: item.sku,
@@ -273,6 +299,9 @@ function App() {
       id: row.order_no,
       date: new Date(row.created_at).toLocaleDateString("zh-TW"),
       amount: row.total_amount,
+      preTaxAmount: row.pre_tax_amount,
+      taxAmount: row.tax_amount,
+      pricing: row.pricing_snapshot,
       status: row.status,
       items: row.items.length,
       shipping: row.shipping_snapshot
@@ -314,8 +343,9 @@ function App() {
     p.name.toLowerCase().includes(query.toLowerCase())
   );
   const totalQty = cart.reduce((sum, x) => sum + x.qty, 0);
-  const dealerPrice = price => Math.round(price * channelSettings.discount / 100);
-  const subtotal = cart.reduce((sum, x) => sum + dealerPrice(x.price) * x.qty, 0);
+  const cartPricing = calculatePricing(cart, channelSettings);
+  const dealerPrice = price => calculatePricing([{ price, qty: 1 }], channelSettings).total;
+  const subtotal = cartPricing.total;
 
   function notify(message) {
     setToast(message);
@@ -359,7 +389,7 @@ function App() {
         body: JSON.stringify({
           contact: user.name,
           storeId: selectedStoreId,
-          items: cart.map(item => ({ ...item, dealerPrice: dealerPrice(item.price) }))
+          items: cart
         })
       });
       const nextHistory = { ...purchaseHistory };
@@ -917,17 +947,18 @@ function ChannelManager({ channels, onChange }) {
   function addChannel() {
     const name = newName.trim();
     if (!name || channels[name]) return;
-    onChange({ ...channels, [name]: { mode: "buyout", discount: 70, hideDealerPrice: false } });
+    onChange({ ...channels, [name]: { mode: "buyout", discount: 70, hideDealerPrice: false, ...normalizePricingSettings({ discount: 70 }) } });
     setNewName("");
   }
   return <div className="channel-manager">
     <div className="add-channel"><input value={newName} onChange={e => setNewName(e.target.value)} placeholder="輸入新通路公司名稱" /><button onClick={addChannel}><Plus /> 新增通路</button></div>
-    <div className="channel-head"><span>通路帳號／公司</span><span>經銷模式</span><span>經銷折數</span><span>價格顯示</span></div>
+    <div className="channel-head"><span>通路帳號／公司</span><span>模式／折數</span><span>稅務與計算方式</span><span>取整與顯示</span></div>
     {Object.entries(channels).map(([name, value]) => <div className="channel-row" key={name}>
       <strong>{name}</strong>
-      <select value={value.mode || "buyout"} onChange={e => update(name, "mode", e.target.value)}><option value="buyout">買斷</option><option value="consignment">寄售</option></select>
-      <label><input type="number" min="1" max="100" value={value.discount} onChange={e => update(name, "discount", Math.min(100, Math.max(1, Number(e.target.value))))} /><span>%</span><small>{discountLabel(value.discount)} = 零售價 × {(value.discount / 100).toFixed(2)}</small></label>
-      <label className="hide-price"><input type="checkbox" checked={value.hideDealerPrice} onChange={e => update(name, "hideDealerPrice", e.target.checked)} /><span>不顯示經銷價</span></label>
+      <div className="channel-controls"><select value={value.mode || "buyout"} onChange={e => update(name, "mode", e.target.value)}><option value="buyout">買斷</option><option value="consignment">寄售</option></select><label><input type="number" min="1" max="100" value={value.discount} onChange={e => update(name, "discount", Math.min(100, Math.max(1, Number(e.target.value))))} /> %</label></div>
+      <div className="channel-controls"><select value={value.taxMode || "included"} onChange={e => update(name, "taxMode", e.target.value)}><option value="included">折後價已含稅</option><option value="excluded">折後價另加稅</option></select><label>稅率 <input type="number" min="0" max="100" step="0.1" value={value.taxRate ?? 5} onChange={e => update(name, "taxRate", Number(e.target.value))} /> %</label><select value={value.calculationScope || "line"} onChange={e => update(name, "calculationScope", e.target.value)}><option value="line">逐品項套折扣再加總</option><option value="document">整張單據加總後套折扣</option></select></div>
+      <div className="channel-controls"><select value={value.roundingMode || "round"} onChange={e => update(name, "roundingMode", e.target.value)}><option value="round">四捨五入</option><option value="floor">無條件捨去</option><option value="ceil">無條件進位</option></select><select value={value.roundingDigits ?? 0} onChange={e => update(name, "roundingDigits", Number(e.target.value))}><option value="0">整數</option><option value="1">小數 1 位</option><option value="2">小數 2 位</option></select><label className="hide-price"><input type="checkbox" checked={value.hideDealerPrice} onChange={e => update(name, "hideDealerPrice", e.target.checked)} /><span>不顯示經銷價</span></label></div>
+      <small className="channel-rule-summary">{discountLabel(value.discount)} · {pricingDescription(value)}</small>
     </div>)}
   </div>;
 }
@@ -956,11 +987,11 @@ function SalesManager({ channels, products, movements, sales, onSave }) {
   const [uploading, setUploading] = useState(false);
   async function createDraft() {
     const product = products.find(p => Number(p.id) === Number(form.productId));
-    const discount = channels[form.company]?.discount || 100;
+    const pricing = calculatePricing([{ price: product.price, qty: Number(form.qty) }], channels[form.company]);
     setUploading(true);
     let attachment = form.attachment;
     try { attachment = await uploadSalesFile(form.file); } catch { attachment = form.file?.name || ""; }
-    const doc = { id: `SO-${Date.now()}`, company: form.company, month: form.month, date: form.date, status: "草稿", note: form.note, attachment, items: [{ productId: Number(form.productId), sku: product.sku, name: product.name, qty: Number(form.qty), price: Math.round(product.price * discount / 100) }] };
+    const doc = { id: `SO-${Date.now()}`, company: form.company, month: form.month, date: form.date, status: "草稿", note: form.note, attachment, pricing: pricing.settings, preTaxAmount: pricing.preTaxTotal, taxAmount: pricing.taxTotal, totalAmount: pricing.total, items: [{ productId: Number(form.productId), sku: product.sku, name: product.name, qty: Number(form.qty), retailPrice: product.price, price: pricing.lines[0].unitPrice }] };
     onSave(movements, [doc, ...sales]);
     postScript({ action: "saveSales", ...doc }).catch(() => {});
     setUploading(false);
@@ -1124,7 +1155,7 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores
       </div>
     )}</div>
     <div className="list-footer">
-      <div className="summary"><span>採購總計</span><strong>{settings.hideDealerPrice ? "價格另行確認" : money(subtotal)}</strong><small>{discountLabel(settings.discount)}通路價格 · 實際運費與優惠將由專人確認</small></div>
+      <div className="summary"><span>採購總計</span><strong>{settings.hideDealerPrice ? "價格另行確認" : money(subtotal)}</strong><small>{discountLabel(settings.discount)} · {pricingDescription(settings)}</small></div>
       {!items.length ? <div className="checkout-hint">請先在左側輸入商品數量</div> : !selectedStoreId ? <div className="checkout-hint warning">請先選擇收貨門市</div> : null}
       <button className="primary checkout" disabled={!items.length || !selectedStoreId || checkingOut} onClick={onCheckout}>
         {checkingOut ? <><RefreshCw className="spin-icon" /> 建立採購單中...</> : <>建立採購單 <ChevronRight /></>}
@@ -1156,7 +1187,7 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
     </div>
     </> : <div className="document-empty">目前尚無採購單，請先前往商品採購建立訂單。</div>)}
     {tab === "orders" && <div className="history document-list"><h2>歷史採購紀錄</h2>{orders.map(o => <div className="history-row" key={o.id}><i>{icon(o.status)}</i><div><strong>{o.id}</strong><small>{o.date} · {o.items} 項商品{o.shipping?.storeName && ` · 寄送 ${o.shipping.storeName}`}</small></div><span className={`status ${o.status === "已完成" ? "complete" : ""}`}>{o.status}</span><strong>{money(o.amount)}</strong><button><FileDown /></button></div>)}</div>}
-    {tab === "sales" && <div className="customer-sales document-list"><div className="document-list-heading"><div><h2>歷史銷貨紀錄</h2><p>銷貨單由東瑭行政人員建檔與上傳，通路帳號僅能檢視及下載。</p></div><span><CheckCircle2 /> 唯讀專區</span></div>{sales.length === 0 ? <div className="document-empty">目前沒有銷貨單紀錄</div> : sales.map(doc => <article key={doc.id}><div><span className="status">{doc.status}</span><strong>{doc.id}</strong><small>{doc.month} · {doc.items.reduce((s, i) => s + i.qty, 0)} 件</small></div><strong>{money(doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><div className="document-files">{doc.attachment && <a href={doc.attachment} target="_blank"><FileText /> 檢視客戶原版</a>}{doc.formalAttachment && <a href={doc.formalAttachment.startsWith("http") ? doc.formalAttachment : "#"}><FileDown /> 檢視正式銷貨單</a>}<button onClick={() => window.print()}><FileDown /> 檢視系統格式</button></div></article>)}</div>}
+    {tab === "sales" && <div className="customer-sales document-list"><div className="document-list-heading"><div><h2>歷史銷貨紀錄</h2><p>銷貨單由東瑭行政人員建檔與上傳，通路帳號僅能檢視及下載。</p></div><span><CheckCircle2 /> 唯讀專區</span></div>{sales.length === 0 ? <div className="document-empty">目前沒有銷貨單紀錄</div> : sales.map(doc => <article key={doc.id}><div><span className="status">{doc.status}</span><strong>{doc.id}</strong><small>{doc.month} · {doc.items.reduce((s, i) => s + i.qty, 0)} 件</small></div><strong>{money(doc.totalAmount || doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><div className="document-files">{doc.attachment && <a href={doc.attachment} target="_blank"><FileText /> 檢視客戶原版</a>}{doc.formalAttachment && <a href={doc.formalAttachment.startsWith("http") ? doc.formalAttachment : "#"}><FileDown /> 檢視正式銷貨單</a>}<button onClick={() => downloadReconciliation(doc, settings)}><FileDown /> 下載發票對帳明細</button></div></article>)}</div>}
     {tab === "stock" && <div className="customer-stock document-list"><h2>目前寄售庫存</h2><div className="customer-stock-head"><span>SKU</span><span>商品</span><span>目前庫存</span><span>狀態</span></div>{stockRows.map(p => { const qty = stockOf(movements, company, p.id); return <div className="customer-stock-row" key={p.id}><span>{p.sku}</span><strong>{p.name}</strong><b>{qty} 件</b><span className={qty <= 5 ? "low" : ""}>{qty <= 5 ? "建議補貨" : "庫存正常"}</span></div>; })}</div>}
   </main>;
 }
