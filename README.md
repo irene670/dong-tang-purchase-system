@@ -7,6 +7,9 @@ npm install
 npm run dev
 ```
 
+正式環境使用 Netlify Identity 驗證及 Netlify Database（Postgres）保存資料。帳號採邀請制，
+管理員帳號需在 Netlify Identity 使用者設定加入 `admin` 角色。
+
 ## Google Sheets 串接
 
 商品分頁使用原試算表的 `gid=1057262128`，訂單寫入 `工作表1`。
@@ -19,10 +22,10 @@ npm run dev
 
 ## 管理後台
 
-- 公司名稱：`admin`
-- 密碼：`admin`
+- 使用 Netlify Identity 的 Email／密碼登入。
+- 管理員必須具備 `admin` role；系統已移除共用的 `admin/admin` 密碼。
 - 可編輯首頁主視覺、新品通知、活動、展示架說明及商品顯示內容。
-- 第一版內容儲存在瀏覽器 `localStorage`，只會套用於同一台裝置。正式多人管理建議改接資料庫並使用後端身分驗證。
+- 首頁內容、商品覆寫、通路設定與訂單儲存在 Netlify Database。
 
 ## 常用採購
 
@@ -59,7 +62,8 @@ npm run dev
 
 ### Apps Script 更新
 
-更新 `google-apps-script/Code.gs` 並重新部署 Web App 後，程式會自動建立：
+更新 `google-apps-script/Code.gs` 並重新部署 Web App 後，程式會使用指定的 Google Drive
+資料夾 `1uJyLCG-TZhsJLHNzsBETa2Lb0HiVlUeA` 保存附件，並自動建立：
 
 - `通路設定`
 - `銷貨單`

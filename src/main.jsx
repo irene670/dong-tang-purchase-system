@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { getUser, handleAuthCallback, login as identityLogin, logout as identityLogout } from "@netlify/identity";
 import {
   Search, ShoppingBag, Plus, Minus, Trash2, ChevronRight,
   PackageCheck, Truck, ClipboardCheck, FileDown, LogOut, UserRound,
@@ -147,6 +148,8 @@ function App() {
   const [channels, setChannels] = useState(loadChannels);
   const [movements, setMovements] = useState(() => JSON.parse(localStorage.getItem("dt-movements") || "null") || defaultMovements);
   const [sales, setSales] = useState(() => JSON.parse(localStorage.getItem("dt-sales") || "null") || defaultSales);
+  const [orders, setOrders] = useState([]);
+  const [authLoading, setAuthLoading] = useState(true);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("常用採購");
@@ -160,7 +163,89 @@ function App() {
 
   useEffect(() => {
     fetchProducts().then(data => { setProducts(data); setLoading(false); });
+    handleAuthCallback().catch(() => {}).finally(async () => {
+      const identityUser = await getUser().catch(() => null);
+      if (identityUser) await loadAccount();
+      setAuthLoading(false);
+    });
   }, []);
+
+  async function api(route, options = {}) {
+    const response = await fetch(`/api/${route}`, {
+      ...options,
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "系統連線失敗");
+    return result;
+  }
+
+  async function loadAccount() {
+    const data = await api("bootstrap");
+    const dealer = data.dealer;
+    const nextChannels = Object.fromEntries(data.dealers.map(row => [row.company_name, {
+      mode: row.mode,
+      discount: row.discount_percent,
+      hideDealerPrice: row.hide_dealer_price
+    }]));
+    const nextEdits = Object.fromEntries(data.productOverrides.map(row => [row.product_id, {
+      name: row.name,
+      category: row.category,
+      price: row.price,
+      image: row.image_url,
+      badges: row.badges,
+      visible: row.visible
+    }]));
+    const nextMovements = data.movements.map(row => ({
+      id: row.id,
+      date: new Date(row.created_at).toLocaleDateString("zh-TW"),
+      company: row.company_name || dealer.company_name,
+      productId: Number(row.product_id),
+      type: row.movement_type,
+      qty: row.quantity,
+      source: row.source_id,
+      operator: row.operator_email,
+      note: row.note
+    }));
+    const nextSales = data.sales.map(row => ({
+      id: row.sales_no,
+      company: row.company_name || dealer.company_name,
+      month: row.sales_month,
+      date: row.sales_date,
+      status: row.status,
+      note: row.note,
+      attachment: row.original_attachment_url,
+      formalAttachment: row.formal_attachment_url,
+      items: row.items.map(item => ({
+        productId: Number(item.product_id),
+        sku: item.sku,
+        name: item.product_name,
+        qty: item.quantity,
+        price: item.unit_price
+      }))
+    }));
+    setAdmin(data.admin);
+    setUser({ company: data.admin ? "東瑭管理員" : dealer.company_name, name: data.user.name, email: data.user.email });
+    setContent(prev => ({ ...prev, ...data.content }));
+    setProductEdits(nextEdits);
+    setChannels(nextChannels);
+    setMovements(nextMovements);
+    setSales(nextSales);
+    setOrders(data.orders.map(row => ({
+      id: row.order_no,
+      date: new Date(row.created_at).toLocaleDateString("zh-TW"),
+      amount: row.total_amount,
+      status: row.status,
+      items: row.items.length
+    })));
+    const history = {};
+    data.orders.flatMap(row => row.items).forEach(item => {
+      const previous = history[item.product_id] || { orderCount: 0, totalQty: 0 };
+      history[item.product_id] = { orderCount: previous.orderCount + 1, totalQty: previous.totalQty + item.quantity };
+    });
+    setPurchaseHistory(history);
+    setView(data.admin ? "admin" : "home");
+  }
 
   const managedProducts = products.map(p => ({
     ...p,
@@ -224,14 +309,14 @@ function App() {
   async function checkout() {
     if (!cart.length) return;
     const order = { company: user.company, contact: user.name, total: subtotal, items: cart, createdAt: new Date().toISOString() };
-    if (!SCRIPT_URL) {
-      notify("尚未設定訂單資料庫");
-      return;
-    }
     try {
-      const res = await fetch(SCRIPT_URL, { method: "POST", body: JSON.stringify(order) });
-      const result = await res.json();
-      if (!result.ok) throw new Error(result.error || "送單失敗");
+      const result = await api("orders", {
+        method: "POST",
+        body: JSON.stringify({
+          contact: user.name,
+          items: cart.map(item => ({ ...item, dealerPrice: dealerPrice(item.price) }))
+        })
+      });
       const nextHistory = { ...purchaseHistory };
       cart.forEach(item => {
         const previous = nextHistory[item.id] || { orderCount: 0, totalQty: 0 };
@@ -250,25 +335,16 @@ function App() {
     }
   }
 
-  function login(credentials) {
-    if (credentials.company === "admin" && credentials.password === "admin") {
-      setAdmin(true);
-      setUser({ company: "東瑭管理員", name: "admin" });
-      setView("admin");
-      return;
-    }
-    const storedHistory = JSON.parse(localStorage.getItem(historyKey(credentials.company)) || "null");
-    const initialHistory = storedHistory || (credentials.company === "好日子設計有限公司" ? demoFrequent : {});
-    setPurchaseHistory(initialHistory);
-    if (!storedHistory && credentials.company === "好日子設計有限公司") {
-      localStorage.setItem(historyKey(credentials.company), JSON.stringify(initialHistory));
-    }
-    setUser({ company: credentials.company, name: credentials.name });
-    setCategory("常用採購");
-    setView("home");
+  async function login(credentials) {
+    await identityLogin(credentials.email, credentials.password);
+    await loadAccount();
   }
 
-  function saveAdmin(nextContent, nextProducts, nextChannels) {
+  async function saveAdmin(nextContent, nextProducts, nextChannels) {
+    await api("settings", {
+      method: "PUT",
+      body: JSON.stringify({ content: nextContent, products: nextProducts, channels: nextChannels })
+    });
     setContent(nextContent);
     setProductEdits(nextProducts);
     setChannels(nextChannels);
@@ -285,6 +361,7 @@ function App() {
     localStorage.setItem("dt-sales", JSON.stringify(nextSales));
   }
 
+  if (authLoading) return <div className="loading-screen"><RefreshCw /> 正在確認登入狀態...</div>;
   if (!user) return <Login onLogin={login} />;
 
   return (
@@ -304,7 +381,7 @@ function App() {
         </nav>
         <div className="account">
           <span><UserRound size={18} /> {user.company}</span>
-          <button title="登出" onClick={() => { setUser(null); setAdmin(false); }}><LogOut size={18} /></button>
+          <button title="登出" onClick={async () => { await identityLogout(); setUser(null); setAdmin(false); }}><LogOut size={18} /></button>
         </div>
       </header>
 
@@ -356,7 +433,7 @@ function App() {
             <PurchaseList items={cart} subtotal={subtotal} totalQty={totalQty} dealerPrice={dealerPrice} settings={channelSettings} onQty={changeQty} onRemove={id => setCart(x => x.filter(i => i.id !== id))} onCheckout={checkout} />
           </section>
         </main>
-      ) : view === "orders" ? <DocumentCenter company={user.company} orders={demoOrders} sales={sales.filter(s => s.company === user.company)} products={managedProducts} movements={movements.filter(m => m.company === user.company)} settings={channelSettings} /> : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels} movements={movements} sales={sales} onSave={saveAdmin} onSaveInventory={saveInventory} />}
+      ) : view === "orders" ? <DocumentCenter company={user.company} orders={orders} sales={sales.filter(s => s.company === user.company)} products={managedProducts} movements={movements.filter(m => m.company === user.company)} settings={channelSettings} /> : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels} movements={movements} sales={sales} onSave={saveAdmin} onSaveInventory={saveInventory} />}
 
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
     </div>
@@ -364,19 +441,31 @@ function App() {
 }
 
 function Login({ onLogin }) {
-  const [company, setCompany] = useState("好日子設計有限公司");
-  const [name, setName] = useState("王小姐");
-  const [password, setPassword] = useState("12345678");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  async function submit() {
+    setSubmitting(true);
+    setError("");
+    try {
+      await onLogin({ email, password });
+    } catch (err) {
+      setError(err.message || "登入失敗，請確認帳號與密碼");
+    } finally {
+      setSubmitting(false);
+    }
+  }
   return <div className="login-page">
     <div className="login-brand"><span className="brand-mark">東</span><div><strong>東瑭國際</strong><small>客戶採購系統</small></div></div>
     <div className="login-panel">
       <span className="eyebrow">WELCOME BACK</span>
-      <h1>歡迎回來</h1><p>登入企業帳號，開始快速採購。</p>
-      <label>公司名稱<input value={company} onChange={e => setCompany(e.target.value)} /></label>
-      <label>聯絡人<input value={name} onChange={e => setName(e.target.value)} /></label>
+      <h1>歡迎回來</h1><p>使用東瑭核發的企業帳號登入。</p>
+      <label>電子郵件<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} /></label>
       <label>密碼<input type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>
-      <button className="primary login-submit" onClick={() => onLogin({ company, name, password })}>登入採購系統 <ChevronRight /></button>
-      <small className="demo-hint">管理後台：公司名稱 admin／密碼 admin</small>
+      {error && <small className="login-error">{error}</small>}
+      <button className="primary login-submit" disabled={submitting || !email || !password} onClick={submit}>{submitting ? "登入中..." : "登入採購系統"} <ChevronRight /></button>
+      <small className="demo-hint">帳號由東瑭管理員邀請建立，不開放自行註冊。</small>
     </div>
     <div className="login-visual"><div><span>DESIGN IN TAIWAN</span><h2>把美好的<br />台灣故事，<br />帶進日常。</h2></div></div>
   </div>;
@@ -422,7 +511,7 @@ function AdminPanel({ content, products, productEdits, channels, movements, sale
 
   return <main className="admin-page">
     <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
-    <div className="admin-notice">目前資料儲存在這台裝置的瀏覽器中。正式多人管理時，建議改接 Google Sheets 或後端資料庫。</div>
+    <div className="admin-notice">帳號、內容、訂單與正式營運資料由 Netlify Identity 及 Netlify Database 集中管理。</div>
     <div className="admin-layout">
       <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><UserRound /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
       <section className="admin-content">

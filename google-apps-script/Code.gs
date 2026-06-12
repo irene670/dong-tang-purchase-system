@@ -9,6 +9,7 @@ const ORDER_SHEET = '工作表1';
 const CHANNEL_SHEET = '通路設定';
 const SALES_SHEET = '銷貨單';
 const MOVEMENT_SHEET = '寄售庫存異動';
+const SALES_DRIVE_FOLDER_ID = '1uJyLCG-TZhsJLHNzsBETa2Lb0HiVlUeA';
 
 function doGet(e) {
   try {
@@ -61,8 +62,7 @@ function handleInventoryAction_(ss, action, payload) {
       return json({ ok: true });
     }
     if (action === 'uploadAttachment') {
-      const folders = DriveApp.getFoldersByName('東瑭寄售銷貨單附件');
-      const folder = folders.hasNext() ? folders.next() : DriveApp.createFolder('東瑭寄售銷貨單附件');
+      const folder = DriveApp.getFolderById(SALES_DRIVE_FOLDER_ID);
       const blob = Utilities.newBlob(Utilities.base64Decode(payload.base64), payload.mimeType || 'application/octet-stream', payload.name);
       const file = folder.createFile(blob);
       return json({ ok: true, url: file.getUrl(), name: file.getName() });
