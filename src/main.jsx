@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   acceptInvite, getUser, handleAuthCallback, login as identityLogin,
-  logout as identityLogout, requestPasswordRecovery, updateUser
+  logout as identityLogout, recoverPassword, requestPasswordRecovery
 } from "@netlify/identity";
 import {
   Search, ShoppingBag, Plus, Minus, Trash2, ChevronRight,
@@ -142,6 +142,16 @@ async function uploadSalesFile(file) {
 const money = n => `NT$ ${Number(n).toLocaleString("zh-TW")}`;
 const discountLabel = value => `${Number(value) / 10} 折`;
 
+function authTokenFromUrl() {
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const query = new URLSearchParams(window.location.search);
+  const inviteToken = hash.get("invite_token") || query.get("invite_token");
+  const recoveryToken = hash.get("recovery_token") || query.get("recovery_token");
+  if (inviteToken) return { type: "invite", token: inviteToken };
+  if (recoveryToken) return { type: "recovery", token: recoveryToken };
+  return null;
+}
+
 function App() {
   const [user, setUser] = useState(null);
   const [admin, setAdmin] = useState(false);
@@ -153,7 +163,7 @@ function App() {
   const [sales, setSales] = useState(() => JSON.parse(localStorage.getItem("dt-sales") || "null") || defaultSales);
   const [orders, setOrders] = useState([]);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authCallback, setAuthCallback] = useState(null);
+  const [authCallback, setAuthCallback] = useState(authTokenFromUrl);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [category, setCategory] = useState("常用採購");
@@ -167,11 +177,17 @@ function App() {
 
   useEffect(() => {
     fetchProducts().then(data => { setProducts(data); setLoading(false); });
+    const urlToken = authTokenFromUrl();
+    if (urlToken) {
+      setAuthCallback(urlToken);
+      setAuthLoading(false);
+      return;
+    }
     handleAuthCallback().then(result => {
       if (result?.type === "invite" || result?.type === "recovery") setAuthCallback(result);
     }).catch(() => {}).finally(async () => {
       const identityUser = await getUser().catch(() => null);
-      if (identityUser && !window.location.hash.includes("recovery_token")) await loadAccount();
+      if (identityUser) await loadAccount();
       setAuthLoading(false);
     });
   }, []);
@@ -348,7 +364,8 @@ function App() {
 
   async function completePassword(password) {
     if (authCallback?.type === "invite") await acceptInvite(authCallback.token, password);
-    else if (authCallback?.type === "recovery") await updateUser({ password });
+    else if (authCallback?.type === "recovery") await recoverPassword(authCallback.token, password);
+    window.history.replaceState({}, document.title, window.location.pathname);
     setAuthCallback(null);
     await loadAccount();
   }
