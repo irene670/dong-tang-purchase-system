@@ -155,6 +155,7 @@ function App() {
   const [toast, setToast] = useState("");
   const [mobileNav, setMobileNav] = useState(false);
   const [purchaseHistory, setPurchaseHistory] = useState({});
+  const [lowStockOnly, setLowStockOnly] = useState(false);
   const channelSettings = user ? channels[user.company] || { discount: 100, hideDealerPrice: false } : { discount: 100, hideDealerPrice: false };
 
   useEffect(() => {
@@ -169,10 +170,20 @@ function App() {
   const frequentProducts = managedProducts
     .filter(p => purchaseHistory[p.id])
     .sort((a, b) => purchaseHistory[b.id].orderCount - purchaseHistory[a.id].orderCount);
-  const categories = useMemo(() => ["常用採購", "全部商品", ...new Set(managedProducts.map(p => p.category))], [managedProducts]);
-  const categoryProducts = category === "常用採購" ? frequentProducts : managedProducts;
+  const inventoryProductIds = new Set(movements.filter(m => m.company === user?.company).map(m => Number(m.productId)));
+  const inventoryProducts = managedProducts
+    .filter(p => inventoryProductIds.has(Number(p.id)))
+    .filter(p => !lowStockOnly || inventoryFor(user?.company, p.id) <= 5)
+    .sort((a, b) => inventoryFor(user?.company, a.id) - inventoryFor(user?.company, b.id));
+  const categories = useMemo(() => [
+    "常用採購",
+    ...(channelSettings.mode === "consignment" ? ["既有庫存"] : []),
+    "全部商品",
+    ...new Set(managedProducts.map(p => p.category))
+  ], [managedProducts, channelSettings.mode]);
+  const categoryProducts = category === "常用採購" ? frequentProducts : category === "既有庫存" ? inventoryProducts : managedProducts;
   const shown = categoryProducts.filter(p =>
-    (category === "常用採購" || category === "全部商品" || p.category === category) &&
+    (category === "常用採購" || category === "既有庫存" || category === "全部商品" || p.category === category) &&
     p.name.toLowerCase().includes(query.toLowerCase())
   );
   const totalQty = cart.reduce((sum, x) => sum + x.qty, 0);
@@ -307,15 +318,19 @@ function App() {
             <div className="product-browser">
               <div className="browser-tools">
                 <div className="search"><Search size={19} /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋品名、品號" /></div>
-                <span>{category === "常用採購" ? `依歷史紀錄找到 ${shown.length} 項常購商品` : `共 ${shown.length} 項商品`}</span>
+                <span>{category === "常用採購" ? `依歷史紀錄找到 ${shown.length} 項常購商品` : category === "既有庫存" ? `庫存商品 ${shown.length} 項，依水位由低至高排列` : `共 ${shown.length} 項商品`}</span>
               </div>
             <div className="category-row">
-              {categories.map(c => <button key={c} onClick={() => setCategory(c)} className={category === c ? "active" : ""}>{c}</button>)}
+              {categories.map(c => <button key={c} onClick={() => { setCategory(c); if (c !== "既有庫存") setLowStockOnly(false); }} className={`${category === c ? "active" : ""} ${c === "常用採購" ? "frequent-category" : ""} ${c === "既有庫存" ? "inventory-category" : ""}`.trim()}>{c}</button>)}
             </div>
+            {category === "既有庫存" && <div className="inventory-filter-bar">
+              <div><Warehouse /><span>顯示通路目前已有庫存紀錄的商品</span></div>
+              <label><input type="checkbox" checked={lowStockOnly} onChange={e => setLowStockOnly(e.target.checked)} /> 只看缺貨／低庫存（5 件以下）</label>
+            </div>}
             {loading ? <div className="loading"><RefreshCw /> 正在同步官網商品...</div> : (
               <div className="product-table">
                 <div className="product-table-head"><span>商品</span><span>品名／品號</span><span>分類</span><span>單價</span><span>採購數量</span></div>
-                {category === "常用採購" && shown.length === 0 ? <div className="frequent-empty"><Clock3 /><h3>目前還沒有歷史採購品項</h3><p>完成第一筆訂單後，曾採購的商品會自動整理到這裡。</p><button onClick={() => setCategory("全部商品")}>瀏覽全部商品</button></div> : shown.map(product => (
+                {category === "常用採購" && shown.length === 0 ? <div className="frequent-empty"><Clock3 /><h3>目前還沒有歷史採購品項</h3><p>完成第一筆訂單後，曾採購的商品會自動整理到這裡。</p><button onClick={() => setCategory("全部商品")}>瀏覽全部商品</button></div> : category === "既有庫存" && shown.length === 0 ? <div className="frequent-empty"><Warehouse /><h3>{lowStockOnly ? "目前沒有缺貨或低庫存商品" : "目前沒有寄售庫存紀錄"}</h3><p>{lowStockOnly ? "目前庫存水位正常，可以取消篩選查看全部既有庫存。" : "商品出貨並加入寄售庫存後，會自動整理到這裡。"}</p>{lowStockOnly && <button onClick={() => setLowStockOnly(false)}>查看全部既有庫存</button>}</div> : shown.map(product => (
                   <article className={`product-row ${cart.some(x => x.id === product.id) ? "selected" : ""}`} key={product.id}>
                     <img src={product.image} alt={product.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
                     <div className="row-name">
