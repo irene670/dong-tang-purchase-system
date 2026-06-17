@@ -338,6 +338,7 @@ async function updateWooCommerceProduct(user, body) {
     });
     const data = await res.json();
     if (!res.ok) return json({ error: data?.message || "WooCommerce 更新失敗" }, res.status);
+    await upsertWooProductCache([data]);
     return json({ ok: true, product: data });
   } catch (error) {
     console.error("WooCommerce update error:", error);
@@ -346,6 +347,12 @@ async function updateWooCommerceProduct(user, body) {
 }
 
 async function fetchWooCommerceProducts(user, req) {
+  const cached = await db.sql`SELECT payload FROM woocommerce_product_cache ORDER BY product_id`;
+  return json(cached.map(row => row.payload));
+}
+
+async function syncWooCommerceProducts(user) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
 
   const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
   const settings = rows[0]?.value;
@@ -355,10 +362,12 @@ async function fetchWooCommerceProducts(user, req) {
     const fallbackUrl = "https://eavo.com.tw/wp-json/wc/store/v1/products?per_page=100";
     try {
       const data = await fetchAllWooPages(fallbackUrl);
-      return json(data);
+      await replaceWooProductCache(data);
+      await saveWooSyncMeta(data.length);
+      return json({ ok: true, count: data.length, products: data });
     } catch (e) {
       console.error("Fallback fetch failed", e);
-      return json([], 200);
+      return json({ error: "官網商品同步失敗" }, 502);
     }
   }
 
@@ -375,11 +384,43 @@ async function fetchWooCommerceProducts(user, req) {
         'Content-Type': 'application/json'
       }
     });
-    return json(data);
+    await replaceWooProductCache(data);
+    await saveWooSyncMeta(data.length);
+    return json({ ok: true, count: data.length, products: data });
   } catch (error) {
     console.error("WooCommerce fetch error:", error);
     return json({ error: error.message || "Internal error fetching products" }, 500);
   }
+}
+
+async function replaceWooProductCache(products) {
+  await db.sql`DELETE FROM woocommerce_product_cache`;
+  await upsertWooProductCache(products);
+}
+
+async function upsertWooProductCache(products) {
+  const syncedAt = new Date().toISOString();
+  for (const product of products) {
+    await db.sql`
+      INSERT INTO woocommerce_product_cache (product_id, payload, status, sku, name, synced_at, updated_at)
+      VALUES (${Number(product.id)}, ${JSON.stringify(product)}::jsonb, ${product.status || ''},
+        ${product.sku || ''}, ${stripHtml(String(product.name || ''))}, ${syncedAt}, now())
+      ON CONFLICT (product_id) DO UPDATE SET payload=EXCLUDED.payload, status=EXCLUDED.status,
+        sku=EXCLUDED.sku, name=EXCLUDED.name, synced_at=EXCLUDED.synced_at, updated_at=now()`;
+  }
+}
+
+async function saveWooSyncMeta(count) {
+  const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
+  const existing = rows[0]?.value || {};
+  await db.sql`
+    INSERT INTO app_settings (key, value, updated_at)
+    VALUES ('woocommerce', ${JSON.stringify({ ...existing, lastSyncAt: new Date().toISOString(), lastSyncCount: count })}::jsonb, now())
+    ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`;
+}
+
+function stripHtml(value = "") {
+  return value.replace(/<[^>]+>/g, "").trim();
 }
 
 async function fetchAllWooPages(baseApiPath, options = {}) {
@@ -432,6 +473,7 @@ export default async function handler(req) {
     if (req.method === "GET" && route === "bootstrap") return json(await bootstrap(user));
     if (req.method === "GET" && route === "settings" && action === "woocommerce") return getWooCommerceSettings(user);
     if (req.method === "POST" && route === "settings" && action === "woocommerce") return saveWooCommerceSettings(user, body);
+    if (req.method === "POST" && route === "products" && action === "sync") return syncWooCommerceProducts(user);
     if (req.method === "POST" && route === "products" && action === "update") return updateWooCommerceProduct(user, body);
     if (req.method === "POST" && route === "orders") return createOrder(user, body);
     if (["saveDealerProfile", "dealer-profile"].includes(action) && ["POST", "PUT"].includes(req.method)) {

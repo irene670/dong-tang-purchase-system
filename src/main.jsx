@@ -842,6 +842,8 @@ function WooProductManager({ api }) {
   const [expandedId, setExpandedId] = useState(null);
   const [editMap, setEditMap] = useState({});
   const [saving, setSaving] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMessage, setSyncMessage] = useState('');
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [page, setPage] = useState(1);
@@ -851,6 +853,7 @@ function WooProductManager({ api }) {
     api('products').then(data => {
       if (!Array.isArray(data)) { setError(data?.error || '無法載入商品資料'); setLoading(false); return; }
       setProducts(data);
+      setSyncMessage(data.length ? `目前使用已同步商品資料，共 ${data.length} 筆。` : '目前資料庫尚無已同步商品，請按「同步官網商品」。');
       setLoading(false);
     }).catch(e => { setError(e.message); setLoading(false); });
   }, [api]);
@@ -872,6 +875,24 @@ function WooProductManager({ api }) {
     setPage(1);
     setExpandedId(null);
   }
+  async function syncProducts() {
+    setSyncing(true);
+    setError(null);
+    setSyncMessage('正在從官網同步商品，請稍候...');
+    try {
+      const result = await api('products', { method: 'POST', body: JSON.stringify({ action: 'sync' }) });
+      if (!result.ok || !Array.isArray(result.products)) throw new Error(result.error || '同步失敗');
+      setProducts(result.products);
+      setPage(1);
+      setExpandedId(null);
+      setSyncMessage(`同步完成，共更新 ${result.count} 筆商品。`);
+    } catch (error) {
+      setError(error.message || '商品同步失敗');
+      setSyncMessage('');
+    } finally {
+      setSyncing(false);
+    }
+  }
 
   const filtered = products.filter(p => {
     const name = (p.name || '').toLowerCase();
@@ -890,7 +911,7 @@ function WooProductManager({ api }) {
   const statusLabel = s => ({ publish: '已發佈', draft: '草稿', pending: '待審', private: '私密', trash: '已刪除' }[s] || s);
   const statusColor = s => ({ publish: '#22c55e', draft: '#f59e0b', pending: '#3b82f6', private: '#8b5cf6', trash: '#ef4444' }[s] || '#888');
 
-  if (loading) return <div className="woo-loading"><RefreshCw className="spin-icon" /> 正在從 WooCommerce 載入商品...</div>;
+  if (loading) return <div className="woo-loading"><RefreshCw className="spin-icon" /> 正在載入已同步商品...</div>;
   if (error) return <div className="woo-error">❌ {error}</div>;
 
   return (
@@ -900,6 +921,9 @@ function WooProductManager({ api }) {
           <Search size={16} />
           <input placeholder="搜尋商品名稱或 SKU..." value={search} onChange={e => updateSearch(e.target.value)} />
         </div>
+        <button className="woo-sync-button" disabled={syncing} onClick={syncProducts}>
+          {syncing ? <><RefreshCw className="spin-icon" /> 同步中...</> : <><RefreshCw size={15} /> 同步官網商品</>}
+        </button>
         <div className="woo-filters">
           {['all', 'publish', 'draft', 'pending', 'private'].map(s => (
             <button key={s} className={filterStatus === s ? 'active' : ''} onClick={() => updateFilter(s)}>
@@ -908,6 +932,7 @@ function WooProductManager({ api }) {
           ))}
         </div>
       </div>
+      {syncMessage && <div className={`woo-sync-message ${syncing ? 'syncing' : ''}`}>{syncMessage}</div>}
       <WooPagination
         total={filtered.length}
         page={currentPage}

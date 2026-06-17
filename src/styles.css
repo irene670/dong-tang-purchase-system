@@ -400,6 +400,11 @@
 .woo-filters button{border:1px solid var(--line);background:#fff;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s}
 .woo-filters button:hover{background:#f0f0eb}
 .woo-filters button.active{background:var(--green);color:#fff;border-color:var(--green)}
+.woo-sync-button{border:0;background:var(--orange);color:#fff;padding:9px 13px;font-size:12px;font-weight:800;display:flex;align-items:center;gap:6px}
+.woo-sync-button:disabled{opacity:.65;cursor:not-allowed}
+.woo-sync-button svg{width:15px}
+.woo-sync-message{background:#edf2ef;color:#527067;border-left:3px solid var(--green);padding:10px 12px;margin-bottom:10px;font-size:12px}
+.woo-sync-message.syncing{background:#fff0e8;color:#a54a29;border-left-color:var(--orange)}
 .woo-pagination{display:flex;align-items:center;justify-content:space-between;gap:14px;background:#f7f6f1;border:1px solid var(--line);padding:10px 12px;margin-bottom:10px;font-size:12px;flex-wrap:wrap}
 .woo-pagination.compact{margin:10px 0 0}
 .woo-page-info{color:#68716d}
