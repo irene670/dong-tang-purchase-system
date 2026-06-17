@@ -369,9 +369,19 @@
 .document-files a,.document-files button{border:1px solid var(--green);background:#fff;padding:8px 10px;text-decoration:none;display:flex;align-items:center;gap:5px;font-size:11px}
 .document-files svg{width:15px}
 .document-empty{text-align:center;padding:65px;color:#999}
-.customer-stock-head,.customer-stock-row{display:grid;grid-template-columns:120px minmax(260px,1fr) 120px 120px;gap:15px;align-items:center}
+.customer-stock-title{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:18px}
+.customer-stock-title h2{font-family:"Shippori Mincho";margin:0 0 6px}
+.customer-stock-title p{margin:0;color:#7d8582;font-size:12px}
+.customer-stock-title>span{background:#fff0e8;color:#c5522d;padding:8px 12px;font-size:11px;font-weight:800;white-space:nowrap}
+.stock-filter-tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
+.stock-filter-tabs button{border:1px solid var(--line);background:#fff;padding:9px 14px;font-weight:800;font-size:12px}
+.stock-filter-tabs button.active{background:var(--green);border-color:var(--green);color:#fff}
+.customer-stock-head,.customer-stock-row{display:grid;grid-template-columns:120px minmax(260px,1fr) 120px 150px 150px;gap:15px;align-items:center}
 .customer-stock-head{background:#f0f0eb;padding:12px;font-size:10px;font-weight:700}
 .customer-stock-row{padding:15px 12px;border-bottom:1px solid var(--line);font-size:12px}
+.customer-stock-row label{display:flex;align-items:center;gap:6px}
+.customer-stock-row input{width:74px;border:1px solid #cfd2cf;padding:8px;background:#fff;font-weight:800}
+.customer-stock-row label small{color:#8a918e;font-size:10px;white-space:nowrap}
 .customer-stock-row>span:last-child{color:#287157}.customer-stock-row>span.low{color:#c9502c;font-weight:700}
 .import-guide{display:grid;grid-template-columns:40px 1fr auto;align-items:center;gap:16px;background:#f0f0eb;padding:22px}
 .import-guide>svg{width:30px;height:30px;color:var(--orange)}
@@ -423,6 +433,7 @@
   .sales-head,.sales-row{min-width:850px}
   .movement-head,.movement-row{min-width:1050px}
   .import-head,.import-row{min-width:850px}
+  .customer-stock-head,.customer-stock-row{min-width:850px}
   .customer-sales article{grid-template-columns:1fr}
   .document-files{justify-content:flex-start}
 }

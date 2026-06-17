@@ -1510,6 +1510,7 @@ function ChannelManager({ channels, onChange }) {
 
 const stockOf = (movements, company, productId) => movements.filter(m => m.company === company && Number(m.productId) === Number(productId)).reduce((sum, m) => sum + Number(m.qty), 0);
 const today = () => new Date().toISOString().slice(0, 10).replaceAll("-", "/");
+const stockAlertKey = company => `dt-stock-alerts-${encodeURIComponent(company || "")}`;
 
 function InventoryOverview({ channels, products, movements }) {
   const consignments = Object.entries(channels).filter(([, value]) => value.mode === "consignment");
@@ -1715,8 +1716,23 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores
 
 function DocumentCenter({ company, orders, sales, products, movements, settings }) {
   const [tab, setTab] = useState("progress");
+  const [stockFilter, setStockFilter] = useState("all");
+  const [stockAlerts, setStockAlerts] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(stockAlertKey(company)) || "{}"); }
+    catch { return {}; }
+  });
   const productMap = Object.fromEntries(products.map(p => [p.id, p]));
-  const stockRows = products.filter(p => stockOf(movements, company, p.id) !== 0);
+  const stockInventoryRows = products
+    .map(product => {
+      const qty = stockOf(movements, company, product.id);
+      const threshold = Number(stockAlerts[product.id] ?? 5);
+      const hasAlert = stockAlerts[product.id] !== undefined && stockAlerts[product.id] !== "";
+      const low = hasAlert ? qty <= threshold : qty <= 5;
+      return { ...product, qty, threshold, hasAlert, low };
+    })
+    .filter(product => product.qty !== 0);
+  const stockRows = stockInventoryRows
+    .filter(product => stockFilter === "all" || (stockFilter === "low" && product.low) || (stockFilter === "normal" && !product.low) || (stockFilter === "unset" && !product.hasAlert));
   const icon = s => s === "已完成" ? <PackageCheck /> : <Truck />;
   const latestOrder = orders[0];
   const orderStepIndex = status => {
@@ -1732,6 +1748,13 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
     { key: "已完成", label: "訂單完成", icon: <ClipboardCheck />, note: order.completedAt ? "已完成" : "等待中" }
   ];
   const statusIcon = status => status === "已完成" ? <ClipboardCheck /> : status === "已出貨" ? <Truck /> : status === "備貨中" ? <PackageCheck /> : status === "已取消" ? <Clock3 /> : <Clock3 />;
+  function setStockAlert(productId, value) {
+    const next = { ...stockAlerts };
+    if (value === "") delete next[productId];
+    else next[productId] = Math.max(0, Number(value) || 0);
+    setStockAlerts(next);
+    localStorage.setItem(stockAlertKey(company), JSON.stringify(next));
+  }
   return <main className="orders-page document-center">
     <div className="orders-intro"><span className="eyebrow">PARTNER DOCUMENT CENTER</span><h1>單據與進度中心</h1><p>統整採購進度、歷史採購、銷貨單據與目前寄售庫存。</p></div>
     <div className="document-tabs"><button className={tab === "progress" ? "active" : ""} onClick={() => setTab("progress")}>目前進度</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>歷史採購</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>歷史銷貨</button>{settings.mode === "consignment" && <button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>寄售庫存</button>}</div>
@@ -1751,7 +1774,16 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
     </> : <div className="document-empty">目前尚無採購單，請先前往商品採購建立訂單。</div>)}
     {tab === "orders" && <div className="history document-list"><h2>歷史採購紀錄</h2>{orders.map(o => <div className="history-row" key={o.id}><i>{icon(o.status)}</i><div><strong>{o.id}</strong><small>{o.date} · {o.items} 項商品{o.shipping?.storeName && ` · 寄送 ${o.shipping.storeName}`}</small></div><span className={`status ${o.status === "已完成" ? "complete" : ""}`}>{o.status}</span><strong>{money(o.amount)}</strong><button><FileDown /></button></div>)}</div>}
     {tab === "sales" && <div className="customer-sales document-list"><div className="document-list-heading"><div><h2>歷史銷貨紀錄</h2><p>銷貨單由東瑭行政人員建檔與上傳，通路帳號僅能檢視及下載。</p></div><span><CheckCircle2 /> 唯讀專區</span></div>{sales.length === 0 ? <div className="document-empty">目前沒有銷貨單紀錄</div> : sales.map(doc => <article key={doc.id}><div><span className="status">{doc.status}</span><strong>{doc.id}</strong><small>{doc.month} · {doc.items.reduce((s, i) => s + i.qty, 0)} 件</small></div><strong>{money(doc.totalAmount || doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><div className="document-files">{doc.attachment && <a href={doc.attachment} target="_blank"><FileText /> 檢視客戶原版</a>}{doc.formalAttachment && <a href={doc.formalAttachment.startsWith("http") ? doc.formalAttachment : "#"}><FileDown /> 檢視正式銷貨單</a>}<button onClick={() => downloadReconciliation(doc, settings)}><FileDown /> 下載發票對帳明細</button></div></article>)}</div>}
-    {tab === "stock" && <div className="customer-stock document-list"><h2>目前寄售庫存</h2><div className="customer-stock-head"><span>SKU</span><span>商品</span><span>目前庫存</span><span>狀態</span></div>{stockRows.map(p => { const qty = stockOf(movements, company, p.id); return <div className="customer-stock-row" key={p.id}><span>{p.sku}</span><strong>{p.name}</strong><b>{qty} 件</b><span className={qty <= 5 ? "low" : ""}>{qty <= 5 ? "建議補貨" : "庫存正常"}</span></div>; })}</div>}
+    {tab === "stock" && <div className="customer-stock document-list">
+      <div className="customer-stock-title"><div><h2>目前寄售庫存</h2><p>可為每個品項設定提醒水位，低於或等於門檻時會標示為低庫存。</p></div><span>{stockInventoryRows.filter(row => row.low).length} 項需留意</span></div>
+      <div className="stock-filter-tabs"><button className={stockFilter === "all" ? "active" : ""} onClick={() => setStockFilter("all")}>全部庫存</button><button className={stockFilter === "low" ? "active" : ""} onClick={() => setStockFilter("low")}>低庫存</button><button className={stockFilter === "normal" ? "active" : ""} onClick={() => setStockFilter("normal")}>庫存正常</button><button className={stockFilter === "unset" ? "active" : ""} onClick={() => setStockFilter("unset")}>未設定提醒</button></div>
+      <div className="customer-stock-head"><span>SKU</span><span>商品</span><span>目前庫存</span><span>提醒水位</span><span>狀態</span></div>
+      {stockRows.length === 0 ? <div className="document-empty">目前沒有符合篩選條件的庫存品項</div> : stockRows.map(p => <div className="customer-stock-row" key={p.id}>
+        <span>{p.sku}</span><strong>{p.name}</strong><b>{p.qty} 件</b>
+        <label><input type="number" min="0" placeholder="預設 5" value={stockAlerts[p.id] ?? ""} onChange={e => setStockAlert(p.id, e.target.value)} /><small>件以下提醒</small></label>
+        <span className={p.low ? "low" : ""}>{p.low ? "低庫存／建議補貨" : "庫存正常"}</span>
+      </div>)}
+    </div>}
   </main>;
 }
 
