@@ -1483,16 +1483,6 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores
   const selectedStore = stores.find(store => store.id === selectedStoreId);
   return <aside className="purchase-list">
     <div className="list-head"><div><span className="eyebrow">CURRENT ORDER</span><h2>本次採購清單</h2></div><b>{items.length} 項／{totalQty} 件</b></div>
-    <div className="shipping-selector">
-      <div><strong>指定收貨門市</strong><button onClick={onManageStores}>管理門市</button></div>
-      {stores.length ? <>
-        <select value={selectedStoreId} onChange={e => onSelectStore(e.target.value)}>
-          <option value="">請選擇收貨地點</option>
-          {stores.map(store => <option value={store.id} key={store.id}>{store.store_name}｜{store.company_name}</option>)}
-        </select>
-        {selectedStore && <p><b>{selectedStore.company_name}</b><span>{selectedStore.address}</span><small>收件：{selectedStore.recipient_name}／{selectedStore.recipient_phone}</small></p>}
-      </> : <div className="shipping-empty">尚未設定門市，請先新增收貨據點。</div>}
-    </div>
     <div className="list-items">{!items.length ? <div className="empty"><ShoppingBag /><h3>尚未選擇商品</h3><p>在左側輸入數量，商品會立即出現在這裡。</p></div> : items.map(item =>
       <div className="list-item" key={item.id}>
         <img className="list-item-image" src={item.image} alt={item.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
@@ -1503,6 +1493,16 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores
       </div>
     )}</div>
     <div className="list-footer">
+      <div className="shipping-selector">
+        <div><strong>指定收貨門市</strong><button onClick={onManageStores}>管理門市</button></div>
+        {stores.length ? <>
+          <select value={selectedStoreId} onChange={e => onSelectStore(e.target.value)}>
+            <option value="">請選擇收貨地點</option>
+            {stores.map(store => <option value={store.id} key={store.id}>{store.store_name}｜{store.company_name}</option>)}
+          </select>
+          {selectedStore && <p><b>{selectedStore.company_name}</b><span>{selectedStore.address}</span><small>收件：{selectedStore.recipient_name}／{selectedStore.recipient_phone}</small></p>}
+        </> : <div className="shipping-empty">尚未設定門市，請先新增收貨據點。</div>}
+      </div>
       <div className="summary"><span>採購總計</span><strong>{settings.hideDealerPrice ? "價格另行確認" : money(subtotal)}</strong><small>{discountLabel(settings.discount)} · {pricingDescription(settings)}</small></div>
       {!items.length ? <div className="checkout-hint">請先在左側輸入商品數量</div> : !selectedStoreId ? <div className="checkout-hint warning">請先選擇收貨門市</div> : null}
       <button className="primary checkout" disabled={!items.length || !selectedStoreId || checkingOut} onClick={onCheckout}>

@@ -49,11 +49,11 @@
 .row-qty svg{width:13px}
 .row-qty input{border:0;border-left:1px solid #d9dbd8;border-right:1px solid #d9dbd8;text-align:center;width:60px;outline:0;font-weight:700;color:var(--green)}
 .row-qty input::-webkit-inner-spin-button{display:none}
-.purchase-list{position:sticky;top:104px;background:#fff;border:1px solid var(--line);display:flex;flex-direction:column}
+.purchase-list{position:sticky;top:104px;background:#fff;border:1px solid var(--line);display:flex;flex-direction:column;max-height:calc(100vh - 124px);min-height:0}
 .list-head{padding:20px 22px;border-bottom:1px solid var(--line);display:flex;align-items:flex-end;justify-content:space-between}
 .list-head h2{font-family:"Shippori Mincho";font-size:22px;margin:5px 0 0}
 .list-head>b{font-size:11px;background:var(--green);color:#fff;padding:7px 9px}
-.list-items{overflow:visible;min-height:220px}
+.list-items{overflow-y:auto;overscroll-behavior:contain;min-height:160px;flex:1}
 .list-item{display:grid;grid-template-columns:48px minmax(0,1fr) 90px 86px 24px;gap:10px;align-items:center;padding:15px 18px;border-bottom:1px solid #ebe9e3}
 .list-item-image{width:48px;height:48px;object-fit:cover;background:#eee;border:1px solid #e1dfd8}
 .list-item>div:nth-child(2){min-width:0}
@@ -62,7 +62,7 @@
 .list-item>.qty{margin:0}
 .list-item>strong{font-size:12px;text-align:right}
 .list-item .remove{padding:0}
-.list-footer{border-top:1px solid var(--line);padding:18px 22px;background:#faf9f5}
+.list-footer{border-top:1px solid var(--line);padding:14px 22px 18px;background:#faf9f5;flex:0 0 auto}
 .list-footer .summary{margin-bottom:12px}
 .list-footer .outline,.list-footer .checkout{margin-top:7px}
 .list-footer button:disabled{opacity:.4;cursor:not-allowed}
@@ -157,7 +157,7 @@
 .store-checks label{display:flex;gap:6px;align-items:center}
 .store-form-actions{display:flex;justify-content:flex-end;gap:8px}
 .store-form-actions>button:not(.primary){border:1px solid var(--green);background:#fff;padding:10px 16px}
-.shipping-selector{padding:17px 20px;border-bottom:1px solid var(--line);background:#f1f4f1}
+.shipping-selector{padding:13px 14px;margin-bottom:14px;border:1px solid #d9e1dc;background:#f1f4f1}
 .shipping-selector>div:first-child{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
 .shipping-selector>div:first-child button{border:0;background:transparent;text-decoration:underline;font-size:11px;color:#56716a}
 .shipping-selector select{width:100%;border:1px solid #bcc7c2;background:#fff;padding:10px}
