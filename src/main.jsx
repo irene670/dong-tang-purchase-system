@@ -1719,18 +1719,32 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
   const stockRows = products.filter(p => stockOf(movements, company, p.id) !== 0);
   const icon = s => s === "已完成" ? <PackageCheck /> : <Truck />;
   const latestOrder = orders[0];
+  const orderStepIndex = status => {
+    if (status === "已取消") return -1;
+    const index = orderStatusFlow.indexOf(status);
+    return index >= 0 ? index : 0;
+  };
+  const orderStepMeta = order => [
+    { key: "訂單成立", label: "訂單成立", icon: <CheckCircle2 />, note: order.date },
+    { key: "已確認", label: "訂單確認", icon: <CheckCircle2 />, note: order.confirmedAt ? "已確認" : "等待確認" },
+    { key: "備貨中", label: "商品備貨", icon: <PackageCheck />, note: order.preparedAt ? "備貨中" : "依訂單進度更新" },
+    { key: "已出貨", label: "商品出貨", icon: <Truck />, note: order.shippedAt ? "已出貨" : "等待中" },
+    { key: "已完成", label: "訂單完成", icon: <ClipboardCheck />, note: order.completedAt ? "已完成" : "等待中" }
+  ];
+  const statusIcon = status => status === "已完成" ? <ClipboardCheck /> : status === "已出貨" ? <Truck /> : status === "備貨中" ? <PackageCheck /> : status === "已取消" ? <Clock3 /> : <Clock3 />;
   return <main className="orders-page document-center">
     <div className="orders-intro"><span className="eyebrow">PARTNER DOCUMENT CENTER</span><h1>單據與進度中心</h1><p>統整採購進度、歷史採購、銷貨單據與目前寄售庫存。</p></div>
     <div className="document-tabs"><button className={tab === "progress" ? "active" : ""} onClick={() => setTab("progress")}>目前進度</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>歷史採購</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>歷史銷貨</button>{settings.mode === "consignment" && <button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>寄售庫存</button>}</div>
     {tab === "progress" && (latestOrder ? <>
     <div className="current-order">
-      <div className="order-top"><div><span>最新訂單</span><h2>{latestOrder.id}</h2><small>{latestOrder.date} 建立 · 共 {latestOrder.items} 項商品{latestOrder.shipping?.storeName && ` · 寄送 ${latestOrder.shipping.storeName}`}</small></div><span className="status preparing"><Clock3 /> {latestOrder.status}</span></div>
+      <div className="order-top"><div><span>最新訂單</span><h2>{latestOrder.id}</h2><small>{latestOrder.date} 建立 · 共 {latestOrder.items} 項商品{latestOrder.shipping?.storeName && ` · 寄送 ${latestOrder.shipping.storeName}`}</small></div><span className={`status ${latestOrder.status === "已完成" ? "complete" : latestOrder.status === "已取消" ? "cancelled" : "preparing"}`}>{statusIcon(latestOrder.status)} {latestOrder.status}</span></div>
       <div className="timeline">
-        <div className="done"><i><CheckCircle2 /></i><strong>訂單成立</strong><small>{latestOrder.date}</small></div>
-        <div className={latestOrder.status === "訂單成立" ? "active" : "done"}><i><CheckCircle2 /></i><strong>訂單確認</strong><small>{latestOrder.status === "訂單成立" ? "等待確認" : "已確認"}</small></div>
-        <div className={["備貨中", "已出貨", "已完成"].includes(latestOrder.status) ? "active" : ""}><i><PackageCheck /></i><strong>商品備貨</strong><small>依訂單進度更新</small></div>
-        <div><i><Truck /></i><strong>商品出貨</strong><small>等待中</small></div>
-        <div><i><ClipboardCheck /></i><strong>訂單完成</strong><small>等待中</small></div>
+        {orderStepMeta(latestOrder).map((step, index) => {
+          const currentIndex = orderStepIndex(latestOrder.status);
+          const done = currentIndex > index;
+          const active = currentIndex === index;
+          return <div className={done ? "done" : active ? "active" : ""} key={step.key}><i>{step.icon}</i><strong>{step.label}</strong><small>{step.note}</small></div>;
+        })}
       </div>
       <div className="order-total"><span>訂單總金額</span><strong>{money(latestOrder.amount)}</strong><button onClick={() => window.print()}><FileDown /> 查看／列印採購單</button></div>
     </div>
