@@ -54,6 +54,9 @@ function isAdmin(user) {
   return user.roles.includes("admin");
 }
 
+const orderStatuses = ["訂單成立", "已確認", "備貨中", "已出貨", "已完成", "已取消"];
+const inventoryOrderStatuses = ["已出貨", "已完成"];
+
 async function bootstrap(user) {
   const dealer = await dealerFor(user);
   const content = await db.sql`SELECT value FROM app_settings WHERE key = 'content'`;
@@ -127,6 +130,78 @@ async function createOrder(user, body) {
         ${item.preTax}, ${item.tax}, ${item.total})`;
   }
   return json({ ok: true, orderNo, pricing });
+}
+
+async function applyPurchaseInventory(user, order, items) {
+  if (order.mode !== "consignment") return;
+  for (const item of items) {
+    await db.sql`
+      INSERT INTO inventory_movements
+        (dealer_id, product_id, movement_type, quantity, source_type, source_id,
+          idempotency_key, operator_email, note)
+      VALUES (${order.dealer_id}, ${Number(item.product_id)}, '採購單入庫',
+        ${Number(item.quantity)}, 'order', ${order.order_no},
+        ${`order:${order.id}:${item.id}:inbound`}, ${user.email}, '採購單已出貨／完成，自動加入寄售庫存')
+      ON CONFLICT (idempotency_key) DO NOTHING`;
+  }
+}
+
+async function reversePurchaseInventory(user, order, items) {
+  if (order.mode !== "consignment") return;
+  const applied = await db.sql`
+    SELECT id FROM inventory_movements
+    WHERE source_type='order' AND source_id=${order.order_no}
+      AND movement_type='採購單入庫'
+    LIMIT 1`;
+  if (!applied.length) return;
+  for (const item of items) {
+    await db.sql`
+      INSERT INTO inventory_movements
+        (dealer_id, product_id, movement_type, quantity, source_type, source_id,
+          idempotency_key, operator_email, note)
+      VALUES (${order.dealer_id}, ${Number(item.product_id)}, '採購單取消回沖',
+        ${-Number(item.quantity)}, 'order', ${order.order_no},
+        ${`order:${order.id}:${item.id}:cancel-reversal`}, ${user.email}, '已入庫採購單取消，自動回沖寄售庫存')
+      ON CONFLICT (idempotency_key) DO NOTHING`;
+  }
+}
+
+async function updateOrder(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const orderId = body.orderId || body.id;
+  const status = body.status;
+  if (!orderId) return json({ error: "缺少訂單 ID" }, 400);
+  if (!orderStatuses.includes(status)) return json({ error: "訂單狀態不正確" }, 400);
+
+  const orders = await db.sql`
+    SELECT o.*, d.company_name, d.mode
+    FROM orders o
+    JOIN dealers d ON d.id=o.dealer_id
+    WHERE o.id::text=${String(orderId)} OR o.order_no=${String(orderId)}`;
+  if (!orders.length) return json({ error: "找不到訂單" }, 404);
+  const order = orders[0];
+  const items = await db.sql`SELECT * FROM order_items WHERE order_id=${order.id} ORDER BY id`;
+
+  const nextTracking = String(body.trackingNo ?? order.tracking_no ?? "").trim();
+  const nextNote = String(body.note ?? order.admin_note ?? "").trim();
+  const now = new Date().toISOString();
+  const rows = await db.sql`
+    UPDATE orders SET status=${status},
+      confirmed_at=CASE WHEN ${status} IN ('已確認','備貨中','已出貨','已完成') AND confirmed_at IS NULL THEN ${now}::timestamptz ELSE confirmed_at END,
+      prepared_at=CASE WHEN ${status} IN ('備貨中','已出貨','已完成') AND prepared_at IS NULL THEN ${now}::timestamptz ELSE prepared_at END,
+      shipped_at=CASE WHEN ${status} IN ('已出貨','已完成') AND shipped_at IS NULL THEN ${now}::timestamptz ELSE shipped_at END,
+      completed_at=CASE WHEN ${status}='已完成' AND completed_at IS NULL THEN ${now}::timestamptz ELSE completed_at END,
+      cancelled_at=CASE WHEN ${status}='已取消' AND cancelled_at IS NULL THEN ${now}::timestamptz ELSE cancelled_at END,
+      tracking_no=${nextTracking},
+      admin_note=${nextNote},
+      updated_at=now()
+    WHERE id=${order.id}
+    RETURNING *`;
+
+  if (inventoryOrderStatuses.includes(status)) await applyPurchaseInventory(user, order, items);
+  if (status === "已取消") await reversePurchaseInventory(user, order, items);
+
+  return json({ ok: true, order: { ...rows[0], company_name: order.company_name, items } });
 }
 
 async function saveDealerProfile(user, body) {
@@ -476,6 +551,9 @@ export default async function handler(req) {
     if (req.method === "POST" && route === "products" && action === "sync") return syncWooCommerceProducts(user);
     if (req.method === "POST" && route === "products" && action === "update") return updateWooCommerceProduct(user, body);
     if (req.method === "POST" && route === "orders") return createOrder(user, body);
+    if (["updateOrder", "order"].includes(action) && ["POST", "PUT", "PATCH"].includes(req.method)) {
+      return updateOrder(user, body);
+    }
     if (["saveDealerProfile", "dealer-profile"].includes(action) && ["POST", "PUT"].includes(req.method)) {
       return saveDealerProfile(user, body);
     }
