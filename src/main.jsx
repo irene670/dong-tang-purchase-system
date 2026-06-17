@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   acceptInvite, getUser, handleAuthCallback, login as identityLogin,
   logout as identityLogout, recoverPassword, requestPasswordRecovery
-} from "@netlify/identity";
+} from "./auth";
 import {
   Search, ShoppingBag, Plus, Minus, Trash2, ChevronRight,
   PackageCheck, Truck, ClipboardCheck, FileDown, LogOut, UserRound,
@@ -219,9 +219,14 @@ function App() {
   }, []);
 
   async function api(route, options = {}) {
+    const token = localStorage.getItem("dt_token");
     const response = await fetch(`/api/${route}`, {
       ...options,
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+        ...(options.headers || {})
+      }
     });
     const text = await response.text();
     let result;
