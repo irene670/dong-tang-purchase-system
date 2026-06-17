@@ -203,11 +203,7 @@ function App() {
   const channelSettings = user ? channels[user.company] || { discount: 100, hideDealerPrice: false } : { discount: 100, hideDealerPrice: false };
 
   useEffect(() => {
-    if (identityUser) {
-      fetchProducts(api).then(data => { setProducts(data); setLoading(false); });
-    } else {
-      setLoading(false);
-    }
+    fetchProducts(api).then(data => { setProducts(data); setLoading(false); });
     const urlToken = authTokenFromUrl();
     if (urlToken) {
       setAuthCallback(urlToken);
