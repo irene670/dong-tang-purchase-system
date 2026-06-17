@@ -272,18 +272,100 @@ async function saveSettings(user, body) {
   return json({ ok: true });
 }
 
+async function getWooCommerceSettings(user) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
+  const settings = rows[0]?.value || { url: '', consumerKey: '', consumerSecret: '' };
+  // Never return the full secret to the frontend, just a masked version or boolean indicator if needed.
+  // Actually, for an admin settings page, they might need to see if it's set. We can return it masked.
+  const maskedSecret = settings.consumerSecret ? '*'.repeat(settings.consumerSecret.length - 4) + settings.consumerSecret.slice(-4) : '';
+  const maskedKey = settings.consumerKey ? '*'.repeat(settings.consumerKey.length - 4) + settings.consumerKey.slice(-4) : '';
+  return json({ ok: true, settings: { url: settings.url, consumerKeyMasked: maskedKey, consumerSecretMasked: maskedSecret } });
+}
+
+async function saveWooCommerceSettings(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const { url, consumerKey, consumerSecret } = body;
+  
+  // Fetch existing to handle masked values
+  const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
+  const existing = rows[0]?.value || {};
+  
+  const finalKey = consumerKey && !consumerKey.includes('*') ? consumerKey : existing.consumerKey;
+  const finalSecret = consumerSecret && !consumerSecret.includes('*') ? consumerSecret : existing.consumerSecret;
+  
+  const newValue = { url: url || existing.url, consumerKey: finalKey, consumerSecret: finalSecret };
+  
+  await db.sql`
+    INSERT INTO app_settings (key, value) VALUES ('woocommerce', ${JSON.stringify(newValue)}::jsonb)
+    ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
+  `;
+  return json({ ok: true });
+}
+
+async function fetchWooCommerceProducts(user, req) {
+  const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
+  const settings = rows[0]?.value;
+  
+  if (!settings || !settings.url) {
+    // Fallback to the old hardcoded public API if not configured, or return empty
+    const fallbackUrl = "https://eavo.com.tw/wp-json/wc/store/v1/products?per_page=100";
+    try {
+      const res = await fetch(fallbackUrl);
+      const data = await res.json();
+      return json(data);
+    } catch (e) {
+      console.error("Fallback fetch failed", e);
+      return json([], 200);
+    }
+  }
+
+  // Ensure URL is properly formatted
+  let baseUrl = settings.url.replace(/\/$/, "");
+  // WooCommerce REST API v3 path
+  const apiPath = \`\${baseUrl}/wp-json/wc/v3/products?per_page=100\`;
+  
+  try {
+    const authHeader = 'Basic ' + Buffer.from(\`\${settings.consumerKey}:\${settings.consumerSecret}\`).toString('base64');
+    const res = await fetch(apiPath, {
+      headers: {
+        'Authorization': authHeader,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("WooCommerce API Error:", res.status, errText);
+      return json({ error: "Failed to fetch from WooCommerce" }, 502);
+    }
+    
+    const data = await res.json();
+    return json(data);
+  } catch (error) {
+    console.error("WooCommerce fetch error:", error);
+    return json({ error: "Internal error fetching products" }, 500);
+  }
+}
+
 export default async function handler(req) {
   try {
-    const user = await auth(req);
-    if (!user) return json({ error: "Unauthorized" }, 401);
-    
-    // Express requests will pass route in req.params.route (from /api/:route)
     const route = req.params?.route || req.query?.route || "bootstrap";
     const body = req.method === "GET" ? {} : req.body;
     const action = body.action || route;
     
+    // Some routes are public
+    if (req.method === "GET" && route === "products") {
+      return fetchWooCommerceProducts(null, req); // Public access
+    }
+
+    const user = await auth(req);
+    if (!user) return json({ error: "Unauthorized" }, 401);
+    
     console.info("API request", { method: req.method, route, action, userId: user.id });
     if (req.method === "GET" && route === "bootstrap") return json(await bootstrap(user));
+    if (req.method === "GET" && route === "settings" && action === "woocommerce") return getWooCommerceSettings(user);
+    if (req.method === "POST" && route === "settings" && action === "woocommerce") return saveWooCommerceSettings(user, body);
     if (req.method === "POST" && route === "orders") return createOrder(user, body);
     if (["saveDealerProfile", "dealer-profile"].includes(action) && ["POST", "PUT"].includes(req.method)) {
       return saveDealerProfile(user, body);

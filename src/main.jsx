@@ -8,7 +8,7 @@ import {
   Search, ShoppingBag, Plus, Minus, Trash2, ChevronRight,
   PackageCheck, Truck, ClipboardCheck, FileDown, LogOut, UserRound,
   RefreshCw, CheckCircle2, Clock3, Menu, Megaphone, Store, CalendarDays,
-  LayoutDashboard, Save, Image
+  LayoutDashboard, Save, Image, Settings
   , Warehouse, FileText, History, SlidersHorizontal, Upload
 } from "lucide-react";
 import { calculatePricing, normalizePricingSettings, pricingDescription } from "../shared/pricing.mjs";
@@ -103,11 +103,11 @@ function stripHtml(value = "") {
   return doc.body.textContent || "";
 }
 
-async function fetchProducts() {
+async function fetchProducts(api) {
   try {
-    const res = await fetch(`${STORE_API}/products?per_page=24`);
-    if (!res.ok) throw new Error("官網同步失敗");
-    const rows = await res.json();
+    const rows = await api('products');
+    if (rows.error) throw new Error(rows.error);
+    if (!Array.isArray(rows)) return fallbackProducts;
     return rows.map((p, index) => ({
       id: p.id,
       sku: p.sku || String(p.id),
@@ -116,7 +116,8 @@ async function fetchProducts() {
       category: p.categories?.find(c => c.name !== "All")?.name?.replace(/[▾▸]/g, "").trim() || "最新商品",
       image: p.images?.[0]?.src || fallbackProducts[index % fallbackProducts.length].image
     }));
-  } catch {
+  } catch (e) {
+    console.error("fetchProducts error", e);
     return fallbackProducts;
   }
 }
@@ -202,7 +203,11 @@ function App() {
   const channelSettings = user ? channels[user.company] || { discount: 100, hideDealerPrice: false } : { discount: 100, hideDealerPrice: false };
 
   useEffect(() => {
-    fetchProducts().then(data => { setProducts(data); setLoading(false); });
+    if (identityUser) {
+      fetchProducts(api).then(data => { setProducts(data); setLoading(false); });
+    } else {
+      setLoading(false);
+    }
     const urlToken = authTokenFromUrl();
     if (urlToken) {
       setAuthCallback(urlToken);
@@ -833,7 +838,52 @@ function ProfileInput({ label, value = "", onChange, area, className = "", type 
   return <label className={`profile-input ${className}`}><span>{label}</span>{area ? <textarea value={value} onChange={e => onChange(e.target.value)} /> : <input type={type} value={value} onChange={e => onChange(e.target.value)} />}</label>;
 }
 
-function AdminPanel({ content, products, productEdits, channels, dealers, movements, sales, onSave, onSaveInventory, onCreateDealerAccount }) {
+function WooCommerceSettings({ api }) {
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [settings, setSettings] = useState({ url: '', consumerKey: '', consumerSecret: '' });
+
+  useEffect(() => {
+    api('settings?action=woocommerce').then(res => {
+      if (res.ok && res.settings) {
+        setSettings({
+          url: res.settings.url || '',
+          consumerKey: res.settings.consumerKeyMasked || '',
+          consumerSecret: res.settings.consumerSecretMasked || ''
+        });
+      }
+      setLoading(false);
+    });
+  }, [api]);
+
+  async function handleSave() {
+    setSaving(true);
+    const res = await api('settings', {
+      method: 'POST',
+      body: JSON.stringify({ action: 'woocommerce', ...settings })
+    });
+    setSaving(false);
+    if (res.ok) alert("WooCommerce API 設定已儲存");
+    else alert("儲存失敗: " + (res.error || "未知錯誤"));
+  }
+
+  if (loading) return <div>載入中...</div>;
+
+  return (
+    <div className="admin-form">
+      <h2>WooCommerce API 設定</h2>
+      <p style={{marginBottom: "1rem", color: "#666"}}>設定商店網址與 REST API 金鑰以同步商品資料。金鑰基於安全考量會遮蔽，若需更新請直接輸入新金鑰。</p>
+      <AdminField label="商店網址 (URL)" value={settings.url} onChange={v => setSettings({ ...settings, url: v })} />
+      <AdminField label="消費者金鑰 (Consumer Key)" value={settings.consumerKey} onChange={v => setSettings({ ...settings, consumerKey: v })} />
+      <AdminField label="消費者密鑰 (Consumer Secret)" value={settings.consumerSecret} onChange={v => setSettings({ ...settings, consumerSecret: v })} />
+      <button className="primary" onClick={handleSave} disabled={saving}>
+        {saving ? "儲存中..." : "儲存設定"}
+      </button>
+    </div>
+  );
+}
+
+function AdminPanel({ api, content, products, productEdits, channels, dealers, movements, sales, onSave, onSaveInventory, onCreateDealerAccount }) {
   const [tab, setTab] = useState("home");
   const [draft, setDraft] = useState(content);
   const [edits, setEdits] = useState(productEdits);
@@ -847,9 +897,9 @@ function AdminPanel({ content, products, productEdits, channels, dealers, moveme
     <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">帳號、內容、訂單與正式營運資料由 Netlify Identity 及 Netlify Database 集中管理。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
+      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
       <section className="admin-content">
-        {tab === "home" ? <div className="admin-form">
+        {tab === "api" ? <WooCommerceSettings api={api} /> : tab === "home" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
           <AdminField label="首頁介紹文字" value={draft.heroText} onChange={v => setDraft({ ...draft, heroText: v })} area />
           <AdminField label="首頁主圖片網址" value={draft.heroImage} onChange={v => setDraft({ ...draft, heroImage: v })} icon />
