@@ -1734,7 +1734,7 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
   const stockRows = stockInventoryRows
     .filter(product => stockFilter === "all" || (stockFilter === "low" && product.low) || (stockFilter === "normal" && !product.low) || (stockFilter === "unset" && !product.hasAlert));
   const icon = s => s === "已完成" ? <PackageCheck /> : <Truck />;
-  const latestOrder = orders[0];
+  const activeOrders = orders.filter(order => !["已完成", "已取消"].includes(order.status));
   const orderStepIndex = status => {
     if (status === "已取消") return -1;
     const index = orderStatusFlow.indexOf(status);
@@ -1758,20 +1758,21 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
   return <main className="orders-page document-center">
     <div className="orders-intro"><span className="eyebrow">PARTNER DOCUMENT CENTER</span><h1>單據與進度中心</h1><p>統整採購進度、歷史採購、銷貨單據與目前寄售庫存。</p></div>
     <div className="document-tabs"><button className={tab === "progress" ? "active" : ""} onClick={() => setTab("progress")}>目前進度</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>歷史採購</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>歷史銷貨</button>{settings.mode === "consignment" && <button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>寄售庫存</button>}</div>
-    {tab === "progress" && (latestOrder ? <>
-    <div className="current-order">
-      <div className="order-top"><div><span>最新訂單</span><h2>{latestOrder.id}</h2><small>{latestOrder.date} 建立 · 共 {latestOrder.items} 項商品{latestOrder.shipping?.storeName && ` · 寄送 ${latestOrder.shipping.storeName}`}</small></div><span className={`status ${latestOrder.status === "已完成" ? "complete" : latestOrder.status === "已取消" ? "cancelled" : "preparing"}`}>{statusIcon(latestOrder.status)} {latestOrder.status}</span></div>
+    {tab === "progress" && (activeOrders.length ? <div className="progress-orders">
+      <div className="progress-summary"><div><h2>進行中的採購單</h2><p>以下採購單尚未完成，會依後台處理狀態同步更新。</p></div><span>{activeOrders.length} 筆進行中</span></div>
+      {activeOrders.map((order, index) => <div className="current-order" key={order.id}>
+      <div className="order-top"><div><span>{index === 0 ? "最新進度" : "進行中訂單"}</span><h2>{order.id}</h2><small>{order.date} 建立 · 共 {order.items} 項商品{order.shipping?.storeName && ` · 寄送 ${order.shipping.storeName}`}</small></div><span className={`status ${order.status === "已完成" ? "complete" : order.status === "已取消" ? "cancelled" : "preparing"}`}>{statusIcon(order.status)} {order.status}</span></div>
       <div className="timeline">
-        {orderStepMeta(latestOrder).map((step, index) => {
-          const currentIndex = orderStepIndex(latestOrder.status);
-          const done = currentIndex > index;
-          const active = currentIndex === index;
+        {orderStepMeta(order).map((step, stepIndex) => {
+          const currentIndex = orderStepIndex(order.status);
+          const done = currentIndex > stepIndex;
+          const active = currentIndex === stepIndex;
           return <div className={done ? "done" : active ? "active" : ""} key={step.key}><i>{step.icon}</i><strong>{step.label}</strong><small>{step.note}</small></div>;
         })}
       </div>
-      <div className="order-total"><span>訂單總金額</span><strong>{money(latestOrder.amount)}</strong><button onClick={() => window.print()}><FileDown /> 查看／列印採購單</button></div>
+      <div className="order-total"><span>訂單總金額</span><strong>{money(order.amount)}</strong><button onClick={() => window.print()}><FileDown /> 查看／列印採購單</button></div>
     </div>
-    </> : <div className="document-empty">目前尚無採購單，請先前往商品採購建立訂單。</div>)}
+    )}</div> : <div className="document-empty">{orders.length ? "目前沒有進行中的採購單，已完成或取消的單據可至歷史採購查看。" : "目前尚無採購單，請先前往商品採購建立訂單。"}</div>)}
     {tab === "orders" && <div className="history document-list"><h2>歷史採購紀錄</h2>{orders.map(o => <div className="history-row" key={o.id}><i>{icon(o.status)}</i><div><strong>{o.id}</strong><small>{o.date} · {o.items} 項商品{o.shipping?.storeName && ` · 寄送 ${o.shipping.storeName}`}</small></div><span className={`status ${o.status === "已完成" ? "complete" : ""}`}>{o.status}</span><strong>{money(o.amount)}</strong><button><FileDown /></button></div>)}</div>}
     {tab === "sales" && <div className="customer-sales document-list"><div className="document-list-heading"><div><h2>歷史銷貨紀錄</h2><p>銷貨單由東瑭行政人員建檔與上傳，通路帳號僅能檢視及下載。</p></div><span><CheckCircle2 /> 唯讀專區</span></div>{sales.length === 0 ? <div className="document-empty">目前沒有銷貨單紀錄</div> : sales.map(doc => <article key={doc.id}><div><span className="status">{doc.status}</span><strong>{doc.id}</strong><small>{doc.month} · {doc.items.reduce((s, i) => s + i.qty, 0)} 件</small></div><strong>{money(doc.totalAmount || doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><div className="document-files">{doc.attachment && <a href={doc.attachment} target="_blank"><FileText /> 檢視客戶原版</a>}{doc.formalAttachment && <a href={doc.formalAttachment.startsWith("http") ? doc.formalAttachment : "#"}><FileDown /> 檢視正式銷貨單</a>}<button onClick={() => downloadReconciliation(doc, settings)}><FileDown /> 下載發票對帳明細</button></div></article>)}</div>}
     {tab === "stock" && <div className="customer-stock document-list">

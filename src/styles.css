@@ -6,6 +6,12 @@
 /* B2B quick-order workspace */
 .status.complete{background:#e7f2ed;color:#257357}
 .status.cancelled{background:#eee;color:#777}
+.progress-orders{display:grid;gap:22px}
+.progress-summary{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;background:#fff;padding:22px 28px;border:1px solid var(--line)}
+.progress-summary h2{font-family:"Shippori Mincho";margin:0 0 6px}
+.progress-summary p{margin:0;color:#7d8582;font-size:12px}
+.progress-summary>span{background:var(--green);color:#fff;padding:8px 12px;font-size:11px;font-weight:800;white-space:nowrap}
+.progress-orders .current-order{margin-top:0}
 .purchase-page{max-width:1600px;padding:38px 3vw 90px}
 .purchase-heading{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:28px}
 .purchase-heading h1{font-family:"Shippori Mincho";font-size:38px;margin:7px 0}
