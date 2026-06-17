@@ -115,12 +115,35 @@ async function fetchProducts(api) {
       price: Number(p.price) || Number(p.regular_price) || Number(p.prices?.price / 100) || fallbackProducts[index % fallbackProducts.length].price,
       category: p.categories?.find(c => c.name !== 'All')?.name?.replace(/[▾▸]/g, '').trim() || '最新商品',
       image: p.images?.[0]?.src || fallbackProducts[index % fallbackProducts.length].image,
-      _raw: p,
     }));
   } catch (e) {
     console.error('fetchProducts error', e);
     return fallbackProducts;
   }
+}
+
+function cartItemFromProduct(product, qty) {
+  return {
+    id: product.id,
+    sku: product.sku,
+    name: product.name,
+    price: product.price,
+    category: product.category,
+    image: product.image,
+    badges: product.badges || [],
+    qty,
+  };
+}
+
+function orderItemsPayload(items) {
+  return items.map(item => ({
+    id: item.id,
+    sku: item.sku,
+    name: item.name,
+    price: item.price,
+    image: item.image,
+    qty: item.qty,
+  }));
 }
 
 async function postScript(payload) {
@@ -362,7 +385,7 @@ function App() {
   function add(product) {
     setCart(prev => {
       const found = prev.find(x => x.id === product.id);
-      return found ? prev.map(x => x.id === product.id ? { ...x, qty: x.qty + 1 } : x) : [...prev, { ...product, qty: 1 }];
+      return found ? prev.map(x => x.id === product.id ? { ...x, qty: x.qty + 1 } : x) : [...prev, cartItemFromProduct(product, 1)];
     });
     notify(`已加入 ${product.name}`);
   }
@@ -378,7 +401,7 @@ function App() {
       if (qty === 0) return prev.filter(x => x.id !== product.id);
       return found
         ? prev.map(x => x.id === product.id ? { ...x, qty } : x)
-        : [...prev, { ...product, qty }];
+        : [...prev, cartItemFromProduct(product, qty)];
     });
   }
 
@@ -389,14 +412,13 @@ function App() {
       return;
     }
     setCheckingOut(true);
-    const order = { company: user.company, contact: user.name, total: subtotal, items: cart, createdAt: new Date().toISOString() };
     try {
       const result = await api("orders", {
         method: "POST",
         body: JSON.stringify({
           contact: user.name,
           storeId: selectedStoreId,
-          items: cart
+          items: orderItemsPayload(cart)
         })
       });
       const nextHistory = { ...purchaseHistory };
@@ -1511,10 +1533,14 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores
     <div className="list-items">{!items.length ? <div className="empty"><ShoppingBag /><h3>尚未選擇商品</h3><p>在左側輸入數量，商品會立即出現在這裡。</p></div> : items.map(item =>
       <div className="list-item" key={item.id}>
         <img className="list-item-image" src={item.image} alt={item.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
-        <div><strong>{item.name}</strong><small>{item.sku} · 零售價 {money(item.price)}{!settings.hideDealerPrice && ` · 經銷價 ${money(dealerPrice(item.price))}`}</small></div>
-        <div className="qty"><button onClick={() => onQty(item.id, -1)}><Minus /></button><span>{item.qty}</span><button onClick={() => onQty(item.id, 1)}><Plus /></button></div>
-        <strong>{settings.hideDealerPrice ? `${item.qty} 件` : money(dealerPrice(item.price) * item.qty)}</strong>
-        <button className="remove" onClick={() => onRemove(item.id)}><Trash2 /></button>
+        <div className="list-item-body">
+          <div className="list-item-title"><strong>{item.name}</strong><button className="remove" onClick={() => onRemove(item.id)} aria-label={`移除 ${item.name}`}><Trash2 /></button></div>
+          <small>{item.sku} · 零售價 {money(item.price)}{!settings.hideDealerPrice && ` · 經銷價 ${money(dealerPrice(item.price))}`}</small>
+          <div className="list-item-actions">
+            <div className="qty"><button onClick={() => onQty(item.id, -1)}><Minus /></button><span>{item.qty}</span><button onClick={() => onQty(item.id, 1)}><Plus /></button></div>
+            <strong>{settings.hideDealerPrice ? `${item.qty} 件` : money(dealerPrice(item.price) * item.qty)}</strong>
+          </div>
+        </div>
       </div>
     )}</div>
     <div className="list-footer">
