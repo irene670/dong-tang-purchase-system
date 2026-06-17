@@ -844,6 +844,8 @@ function WooProductManager({ api }) {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
 
   useEffect(() => {
     api('products').then(data => {
@@ -855,6 +857,21 @@ function WooProductManager({ api }) {
 
   function getEdit(id) { return editMap[id] || {}; }
   function setEdit(id, field, value) { setEditMap(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } })); }
+  function updateSearch(value) {
+    setSearch(value);
+    setPage(1);
+    setExpandedId(null);
+  }
+  function updateFilter(value) {
+    setFilterStatus(value);
+    setPage(1);
+    setExpandedId(null);
+  }
+  function updatePageSize(value) {
+    setPageSize(Number(value));
+    setPage(1);
+    setExpandedId(null);
+  }
 
   const filtered = products.filter(p => {
     const name = (p.name || '').toLowerCase();
@@ -864,6 +881,11 @@ function WooProductManager({ api }) {
     const matchStatus = filterStatus === 'all' || p.status === filterStatus;
     return matchSearch && matchStatus;
   });
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const currentPage = Math.min(page, pageCount);
+  const pageStart = filtered.length ? (currentPage - 1) * pageSize : 0;
+  const pageEnd = Math.min(pageStart + pageSize, filtered.length);
+  const pagedProducts = filtered.slice(pageStart, pageEnd);
 
   const statusLabel = s => ({ publish: '已發佈', draft: '草稿', pending: '待審', private: '私密', trash: '已刪除' }[s] || s);
   const statusColor = s => ({ publish: '#22c55e', draft: '#f59e0b', pending: '#3b82f6', private: '#8b5cf6', trash: '#ef4444' }[s] || '#888');
@@ -876,20 +898,30 @@ function WooProductManager({ api }) {
       <div className="woo-toolbar">
         <div className="woo-search">
           <Search size={16} />
-          <input placeholder="搜尋商品名稱或 SKU..." value={search} onChange={e => setSearch(e.target.value)} />
+          <input placeholder="搜尋商品名稱或 SKU..." value={search} onChange={e => updateSearch(e.target.value)} />
         </div>
         <div className="woo-filters">
           {['all', 'publish', 'draft', 'pending', 'private'].map(s => (
-            <button key={s} className={filterStatus === s ? 'active' : ''} onClick={() => setFilterStatus(s)}>
+            <button key={s} className={filterStatus === s ? 'active' : ''} onClick={() => updateFilter(s)}>
               {s === 'all' ? `全部 (${products.length})` : `${statusLabel(s)} (${products.filter(p => p.status === s).length})`}
             </button>
           ))}
         </div>
       </div>
+      <WooPagination
+        total={filtered.length}
+        page={currentPage}
+        pageCount={pageCount}
+        pageStart={pageStart}
+        pageEnd={pageEnd}
+        pageSize={pageSize}
+        onPage={next => { setPage(next); setExpandedId(null); }}
+        onPageSize={updatePageSize}
+      />
 
       <div className="woo-product-list">
         {filtered.length === 0 && <div className="woo-empty">沒有符合條件的商品</div>}
-        {filtered.map(p => {
+        {pagedProducts.map(p => {
           const edit = getEdit(p.id);
           const isOpen = expandedId === p.id;
           const price = p.price || p.regular_price || '';
@@ -1078,8 +1110,43 @@ function WooProductManager({ api }) {
           );
         })}
       </div>
+      {filtered.length > pageSize && <WooPagination
+        total={filtered.length}
+        page={currentPage}
+        pageCount={pageCount}
+        pageStart={pageStart}
+        pageEnd={pageEnd}
+        pageSize={pageSize}
+        onPage={next => { setPage(next); setExpandedId(null); }}
+        onPageSize={updatePageSize}
+        compact
+      />}
     </div>
   );
+}
+
+function WooPagination({ total, page, pageCount, pageStart, pageEnd, pageSize, onPage, onPageSize, compact = false }) {
+  return <div className={`woo-pagination ${compact ? 'compact' : ''}`}>
+    <div className="woo-page-info">
+      {total ? <>顯示 <strong>{pageStart + 1}</strong> - <strong>{pageEnd}</strong> 筆，共 <strong>{total}</strong> 筆</> : <>目前沒有商品</>}
+    </div>
+    <div className="woo-page-controls">
+      {!compact && <label>每頁
+        <select value={pageSize} onChange={e => onPageSize(e.target.value)}>
+          <option value="10">10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+          <option value="100">100</option>
+        </select>
+        筆
+      </label>}
+      <button disabled={page <= 1} onClick={() => onPage(1)}>第一頁</button>
+      <button disabled={page <= 1} onClick={() => onPage(page - 1)}>上一頁</button>
+      <span>{page} / {pageCount}</span>
+      <button disabled={page >= pageCount} onClick={() => onPage(page + 1)}>下一頁</button>
+      <button disabled={page >= pageCount} onClick={() => onPage(pageCount)}>最後頁</button>
+    </div>
+  </div>;
 }
 
 function WooCommerceSettings({ api }) {

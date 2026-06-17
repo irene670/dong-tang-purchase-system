@@ -400,6 +400,17 @@
 .woo-filters button{border:1px solid var(--line);background:#fff;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;transition:.15s}
 .woo-filters button:hover{background:#f0f0eb}
 .woo-filters button.active{background:var(--green);color:#fff;border-color:var(--green)}
+.woo-pagination{display:flex;align-items:center;justify-content:space-between;gap:14px;background:#f7f6f1;border:1px solid var(--line);padding:10px 12px;margin-bottom:10px;font-size:12px;flex-wrap:wrap}
+.woo-pagination.compact{margin:10px 0 0}
+.woo-page-info{color:#68716d}
+.woo-page-info strong{color:var(--green)}
+.woo-page-controls{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.woo-page-controls label{display:flex;align-items:center;gap:6px;color:#68716d}
+.woo-page-controls select{border:1px solid #d5d2cb;background:#fff;padding:5px 8px}
+.woo-page-controls button{border:1px solid var(--line);background:#fff;padding:6px 10px;font-size:12px;font-weight:700}
+.woo-page-controls button:disabled{opacity:.45;cursor:not-allowed}
+.woo-page-controls button:not(:disabled):hover{background:var(--green);border-color:var(--green);color:#fff}
+.woo-page-controls span{padding:0 6px;font-weight:700;color:var(--green)}
 .woo-product-list{display:flex;flex-direction:column;gap:6px;overflow-y:auto}
 .woo-empty{padding:40px;text-align:center;color:#999}
 .woo-product-card{border:1px solid var(--line);background:#fff;overflow:hidden;transition:.15s}
