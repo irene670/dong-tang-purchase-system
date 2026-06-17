@@ -354,8 +354,7 @@ async function fetchWooCommerceProducts(user, req) {
     // Fallback to the old hardcoded public API if not configured, or return empty
     const fallbackUrl = "https://eavo.com.tw/wp-json/wc/store/v1/products?per_page=100";
     try {
-      const res = await fetch(fallbackUrl);
-      const data = await res.json();
+      const data = await fetchAllWooPages(fallbackUrl);
       return json(data);
     } catch (e) {
       console.error("Fallback fetch failed", e);
@@ -370,25 +369,49 @@ async function fetchWooCommerceProducts(user, req) {
   
   try {
     const authHeader = 'Basic ' + Buffer.from(`${settings.consumerKey}:${settings.consumerSecret}`).toString('base64');
-    const res = await fetch(apiPath, {
+    const data = await fetchAllWooPages(apiPath, {
       headers: {
         'Authorization': authHeader,
         'Content-Type': 'application/json'
       }
     });
-    
-    if (!res.ok) {
-      const errText = await res.text();
-      console.error("WooCommerce API Error:", res.status, errText);
-      return json({ error: "Failed to fetch from WooCommerce" }, 502);
-    }
-    
-    const data = await res.json();
     return json(data);
   } catch (error) {
     console.error("WooCommerce fetch error:", error);
-    return json({ error: "Internal error fetching products" }, 500);
+    return json({ error: error.message || "Internal error fetching products" }, 500);
   }
+}
+
+async function fetchAllWooPages(baseApiPath, options = {}) {
+  const perPage = 100;
+  const maxPages = 20;
+  const products = [];
+  let totalPages = null;
+
+  for (let page = 1; page <= (totalPages || maxPages); page += 1) {
+    const url = new URL(baseApiPath);
+    url.searchParams.set("per_page", String(perPage));
+    url.searchParams.set("page", String(page));
+    const res = await fetch(url, options);
+
+    if (!res.ok) {
+      const errText = await res.text();
+      console.error("WooCommerce API Error:", res.status, errText);
+      throw new Error(`WooCommerce 商品同步失敗（HTTP ${res.status}）`);
+    }
+
+    const rows = await res.json();
+    if (!Array.isArray(rows)) return products;
+    products.push(...rows);
+
+    const headerPages = Number(res.headers.get("x-wp-totalpages"));
+    if (Number.isFinite(headerPages) && headerPages > 0) {
+      totalPages = Math.min(headerPages, maxPages);
+    }
+    if (!rows.length || rows.length < perPage) break;
+  }
+
+  return products;
 }
 
 export default async function handler(req) {
