@@ -323,10 +323,10 @@ async function fetchWooCommerceProducts(user, req) {
   // Ensure URL is properly formatted
   let baseUrl = settings.url.replace(/\/$/, "");
   // WooCommerce REST API v3 path
-  const apiPath = \`\${baseUrl}/wp-json/wc/v3/products?per_page=100\`;
+  const apiPath = `${baseUrl}/wp-json/wc/v3/products?per_page=100`;
   
   try {
-    const authHeader = 'Basic ' + Buffer.from(\`\${settings.consumerKey}:\${settings.consumerSecret}\`).toString('base64');
+    const authHeader = 'Basic ' + Buffer.from(`${settings.consumerKey}:${settings.consumerSecret}`).toString('base64');
     const res = await fetch(apiPath, {
       headers: {
         'Authorization': authHeader,
