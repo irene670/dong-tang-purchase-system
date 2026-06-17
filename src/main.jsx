@@ -112,12 +112,13 @@ async function fetchProducts(api) {
       id: p.id,
       sku: p.sku || String(p.id),
       name: stripHtml(p.name),
-      price: Number(p.prices?.price) || fallbackProducts[index % fallbackProducts.length].price,
-      category: p.categories?.find(c => c.name !== "All")?.name?.replace(/[▾▸]/g, "").trim() || "最新商品",
-      image: p.images?.[0]?.src || fallbackProducts[index % fallbackProducts.length].image
+      price: Number(p.price) || Number(p.regular_price) || Number(p.prices?.price / 100) || fallbackProducts[index % fallbackProducts.length].price,
+      category: p.categories?.find(c => c.name !== 'All')?.name?.replace(/[▾▸]/g, '').trim() || '最新商品',
+      image: p.images?.[0]?.src || fallbackProducts[index % fallbackProducts.length].image,
+      _raw: p,
     }));
   } catch (e) {
-    console.error("fetchProducts error", e);
+    console.error('fetchProducts error', e);
     return fallbackProducts;
   }
 }
@@ -834,7 +835,255 @@ function ProfileInput({ label, value = "", onChange, area, className = "", type 
   return <label className={`profile-input ${className}`}><span>{label}</span>{area ? <textarea value={value} onChange={e => onChange(e.target.value)} /> : <input type={type} value={value} onChange={e => onChange(e.target.value)} />}</label>;
 }
 
+function WooProductManager({ api }) {
+  const [products, setProducts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [expandedId, setExpandedId] = useState(null);
+  const [editMap, setEditMap] = useState({});
+  const [saving, setSaving] = useState(false);
+  const [search, setSearch] = useState('');
+  const [filterStatus, setFilterStatus] = useState('all');
+
+  useEffect(() => {
+    api('products').then(data => {
+      if (!Array.isArray(data)) { setError(data?.error || '無法載入商品資料'); setLoading(false); return; }
+      setProducts(data);
+      setLoading(false);
+    }).catch(e => { setError(e.message); setLoading(false); });
+  }, [api]);
+
+  function getEdit(id) { return editMap[id] || {}; }
+  function setEdit(id, field, value) { setEditMap(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } })); }
+
+  const filtered = products.filter(p => {
+    const name = (p.name || '').toLowerCase();
+    const sku = (p.sku || '').toLowerCase();
+    const q = search.toLowerCase();
+    const matchSearch = !q || name.includes(q) || sku.includes(q);
+    const matchStatus = filterStatus === 'all' || p.status === filterStatus;
+    return matchSearch && matchStatus;
+  });
+
+  const statusLabel = s => ({ publish: '已發佈', draft: '草稿', pending: '待審', private: '私密', trash: '已刪除' }[s] || s);
+  const statusColor = s => ({ publish: '#22c55e', draft: '#f59e0b', pending: '#3b82f6', private: '#8b5cf6', trash: '#ef4444' }[s] || '#888');
+
+  if (loading) return <div className="woo-loading"><RefreshCw className="spin-icon" /> 正在從 WooCommerce 載入商品...</div>;
+  if (error) return <div className="woo-error">❌ {error}</div>;
+
+  return (
+    <div className="woo-product-manager">
+      <div className="woo-toolbar">
+        <div className="woo-search">
+          <Search size={16} />
+          <input placeholder="搜尋商品名稱或 SKU..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <div className="woo-filters">
+          {['all', 'publish', 'draft', 'pending', 'private'].map(s => (
+            <button key={s} className={filterStatus === s ? 'active' : ''} onClick={() => setFilterStatus(s)}>
+              {s === 'all' ? `全部 (${products.length})` : `${statusLabel(s)} (${products.filter(p => p.status === s).length})`}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="woo-product-list">
+        {filtered.length === 0 && <div className="woo-empty">沒有符合條件的商品</div>}
+        {filtered.map(p => {
+          const edit = getEdit(p.id);
+          const isOpen = expandedId === p.id;
+          const price = p.price || p.regular_price || '';
+          const salePrice = p.sale_price || '';
+          const cats = (p.categories || []).map(c => c.name).join(', ');
+          const tags = (p.tags || []).map(t => t.name).join(', ');
+          const images = p.images || [];
+          const attrs = p.attributes || [];
+          const dims = p.dimensions || {};
+
+          return (
+            <div key={p.id} className={`woo-product-card ${isOpen ? 'open' : ''}`}>
+              {/* Summary Row */}
+              <div className="woo-product-summary" onClick={() => setExpandedId(isOpen ? null : p.id)}>
+                <img src={images[0]?.src || ''} alt={p.name} className="woo-thumb" />
+                <div className="woo-summary-info">
+                  <strong dangerouslySetInnerHTML={{ __html: p.name }} />
+                  <span className="woo-sku">SKU: {p.sku || '—'}</span>
+                </div>
+                <div className="woo-summary-meta">
+                  <span style={{ color: statusColor(p.status), fontWeight: 600, fontSize: '0.75rem' }}>● {statusLabel(p.status)}</span>
+                  <span className="woo-price">NT$ {Number(price).toLocaleString('zh-TW')}</span>
+                  {salePrice && <span className="woo-sale">特價 NT$ {Number(salePrice).toLocaleString('zh-TW')}</span>}
+                </div>
+                <span className="woo-expand-icon">{isOpen ? '▲' : '▼'}</span>
+              </div>
+
+              {/* Expanded Detail */}
+              {isOpen && (
+                <div className="woo-product-detail">
+                  <div className="woo-detail-grid">
+
+                    {/* Basic Info */}
+                    <section className="woo-section">
+                      <h4>基本資訊</h4>
+                      <label><span>商品名稱</span><input value={edit.name ?? stripHtml(p.name)} onChange={e => setEdit(p.id, 'name', e.target.value)} /></label>
+                      <label><span>SKU</span><input value={edit.sku ?? p.sku} onChange={e => setEdit(p.id, 'sku', e.target.value)} /></label>
+                      <label><span>狀態</span>
+                        <select value={edit.status ?? p.status} onChange={e => setEdit(p.id, 'status', e.target.value)}>
+                          <option value="publish">已發佈</option>
+                          <option value="draft">草稿</option>
+                          <option value="pending">待審核</option>
+                          <option value="private">私密</option>
+                        </select>
+                      </label>
+                      <label><span>分類</span><input value={edit.categories ?? cats} onChange={e => setEdit(p.id, 'categories', e.target.value)} /></label>
+                      <label><span>標籤</span><input value={edit.tags ?? tags} onChange={e => setEdit(p.id, 'tags', e.target.value)} /></label>
+                      <label><span>商品類型</span><span className="woo-readonly">{p.type || '—'}</span></label>
+                      <label><span>WP 連結</span><a href={p.permalink} target="_blank" rel="noreferrer" className="woo-link">{p.permalink}</a></label>
+                      <label><span>建立時間</span><span className="woo-readonly">{p.date_created ? new Date(p.date_created).toLocaleString('zh-TW') : '—'}</span></label>
+                      <label><span>修改時間</span><span className="woo-readonly">{p.date_modified ? new Date(p.date_modified).toLocaleString('zh-TW') : '—'}</span></label>
+                    </section>
+
+                    {/* Pricing */}
+                    <section className="woo-section">
+                      <h4>價格</h4>
+                      <label><span>定價</span><input type="number" value={edit.regular_price ?? p.regular_price} onChange={e => setEdit(p.id, 'regular_price', e.target.value)} /></label>
+                      <label><span>特價</span><input type="number" value={edit.sale_price ?? p.sale_price} onChange={e => setEdit(p.id, 'sale_price', e.target.value)} /></label>
+                      <label><span>特價開始</span><input type="date" value={edit.date_on_sale_from?.slice(0,10) ?? (p.date_on_sale_from?.slice(0,10) || '')} onChange={e => setEdit(p.id, 'date_on_sale_from', e.target.value)} /></label>
+                      <label><span>特價結束</span><input type="date" value={edit.date_on_sale_to?.slice(0,10) ?? (p.date_on_sale_to?.slice(0,10) || '')} onChange={e => setEdit(p.id, 'date_on_sale_to', e.target.value)} /></label>
+                      <label><span>含稅狀態</span><span className="woo-readonly">{p.tax_status || '—'} / {p.tax_class || '標準'}</span></label>
+                    </section>
+
+                    {/* Inventory */}
+                    <section className="woo-section">
+                      <h4>庫存</h4>
+                      <label><span>管理庫存</span>
+                        <select value={edit.manage_stock ?? String(p.manage_stock)} onChange={e => setEdit(p.id, 'manage_stock', e.target.value === 'true')}>
+                          <option value="true">是</option>
+                          <option value="false">否</option>
+                        </select>
+                      </label>
+                      <label><span>庫存數量</span><input type="number" value={edit.stock_quantity ?? p.stock_quantity} onChange={e => setEdit(p.id, 'stock_quantity', Number(e.target.value))} /></label>
+                      <label><span>庫存狀態</span>
+                        <select value={edit.stock_status ?? p.stock_status} onChange={e => setEdit(p.id, 'stock_status', e.target.value)}>
+                          <option value="instock">有庫存</option>
+                          <option value="outofstock">缺貨</option>
+                          <option value="onbackorder">預購中</option>
+                        </select>
+                      </label>
+                      <label><span>允許預購</span>
+                        <select value={edit.backorders ?? p.backorders} onChange={e => setEdit(p.id, 'backorders', e.target.value)}>
+                          <option value="no">不允許</option>
+                          <option value="notify">通知</option>
+                          <option value="yes">允許</option>
+                        </select>
+                      </label>
+                      <label><span>低庫存閾值</span><input type="number" value={edit.low_stock_amount ?? p.low_stock_amount} onChange={e => setEdit(p.id, 'low_stock_amount', Number(e.target.value))} /></label>
+                      <label><span>總銷售量</span><span className="woo-readonly">{p.total_sales ?? '—'}</span></label>
+                    </section>
+
+                    {/* Shipping */}
+                    <section className="woo-section">
+                      <h4>運送</h4>
+                      <label><span>重量 (kg)</span><input type="number" value={edit.weight ?? p.weight} onChange={e => setEdit(p.id, 'weight', e.target.value)} /></label>
+                      <label><span>長 (cm)</span><input type="number" value={edit['dim_length'] ?? dims.length} onChange={e => setEdit(p.id, 'dim_length', e.target.value)} /></label>
+                      <label><span>寬 (cm)</span><input type="number" value={edit['dim_width'] ?? dims.width} onChange={e => setEdit(p.id, 'dim_width', e.target.value)} /></label>
+                      <label><span>高 (cm)</span><input type="number" value={edit['dim_height'] ?? dims.height} onChange={e => setEdit(p.id, 'dim_height', e.target.value)} /></label>
+                      <label><span>運費等級</span><input value={edit.shipping_class ?? p.shipping_class} onChange={e => setEdit(p.id, 'shipping_class', e.target.value)} /></label>
+                    </section>
+
+                    {/* Description */}
+                    <section className="woo-section woo-section-full">
+                      <h4>商品描述</h4>
+                      <label><span>完整描述</span><textarea rows={4} value={edit.description ?? stripHtml(p.description)} onChange={e => setEdit(p.id, 'description', e.target.value)} /></label>
+                      <label><span>簡短描述</span><textarea rows={2} value={edit.short_description ?? stripHtml(p.short_description)} onChange={e => setEdit(p.id, 'short_description', e.target.value)} /></label>
+                      <label><span>購買備註</span><input value={edit.purchase_note ?? p.purchase_note} onChange={e => setEdit(p.id, 'purchase_note', e.target.value)} /></label>
+                    </section>
+
+                    {/* Images */}
+                    <section className="woo-section woo-section-full">
+                      <h4>商品圖片</h4>
+                      <div className="woo-images">
+                        {images.map((img, i) => (
+                          <div key={img.id} className="woo-image-item">
+                            <img src={img.src} alt={img.alt || img.name} />
+                            <span>{i === 0 ? '主圖' : `附圖 ${i}`}</span>
+                            <small>{img.name}</small>
+                          </div>
+                        ))}
+                        {images.length === 0 && <span className="woo-readonly">（無圖片）</span>}
+                      </div>
+                    </section>
+
+                    {/* Attributes */}
+                    {attrs.length > 0 && (
+                      <section className="woo-section woo-section-full">
+                        <h4>商品屬性</h4>
+                        <div className="woo-attrs">
+                          {attrs.map(attr => (
+                            <div key={attr.id || attr.name} className="woo-attr-row">
+                              <strong>{attr.name}：</strong>
+                              <span>{(attr.options || []).join('、')}</span>
+                              <small>{attr.visible ? '前台顯示' : '隱藏'} · {attr.variation ? '變化款' : ''}</small>
+                            </div>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+
+                    {/* Meta */}
+                    <section className="woo-section">
+                      <h4>SEO / 進階</h4>
+                      <label><span>精選</span>
+                        <select value={edit.featured ?? String(p.featured)} onChange={e => setEdit(p.id, 'featured', e.target.value === 'true')}>
+                          <option value="false">否</option>
+                          <option value="true">是</option>
+                        </select>
+                      </label>
+                      <label><span>評論開放</span>
+                        <select value={edit.reviews_allowed ?? String(p.reviews_allowed)} onChange={e => setEdit(p.id, 'reviews_allowed', e.target.value === 'true')}>
+                          <option value="true">是</option>
+                          <option value="false">否</option>
+                        </select>
+                      </label>
+                      <label><span>平均評分</span><span className="woo-readonly">{p.average_rating} ({p.rating_count} 則)</span></label>
+                      <label><span>選單順序</span><input type="number" value={edit.menu_order ?? p.menu_order} onChange={e => setEdit(p.id, 'menu_order', Number(e.target.value))} /></label>
+                    </section>
+                  </div>
+
+                  <div className="woo-actions">
+                    <button className="primary" disabled={saving || !editMap[p.id]} onClick={async () => {
+                      setSaving(true);
+                      try {
+                        const payload = { ...editMap[p.id], id: p.id };
+                        const res = await api('products', { method: 'POST', body: JSON.stringify({ action: 'update', product: payload }) });
+                        if (res.ok !== false) {
+                          setProducts(prev => prev.map(prod => prod.id === p.id ? { ...prod, ...editMap[p.id] } : prod));
+                          setEditMap(prev => { const n = { ...prev }; delete n[p.id]; return n; });
+                          alert('✅ 商品已更新');
+                        } else {
+                          alert('❌ 更新失敗：' + (res.error || '請確認 API 設定'));
+                        }
+                      } finally { setSaving(false); }
+                    }}>
+                      {saving ? <><RefreshCw className="spin-icon" /> 儲存中...</> : <><Save size={14} /> 儲存此商品</>}
+                    </button>
+                    <button onClick={() => { setEditMap(prev => { const n = { ...prev }; delete n[p.id]; return n; }); }}>
+                      撤銷修改
+                    </button>
+                    <a href={p.permalink} target="_blank" rel="noreferrer" className="woo-btn-link">↗ 查看前台</a>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function WooCommerceSettings({ api }) {
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [settings, setSettings] = useState({ url: '', consumerKey: '', consumerSecret: '' });
@@ -910,26 +1159,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, m
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "products" ? <div className="admin-products">
-          <div className="admin-product-head"><span>顯示</span><span>商品</span><span>名稱／狀態</span><span>分類</span><span>售價</span></div>
-          {products.map(product => {
-            const value = { ...product, badges: defaultBadges[product.id] || [], ...(edits[product.id] || {}) };
-            return <div className="admin-product-row" key={product.id}>
-              <input type="checkbox" checked={value.visible !== false} onChange={e => updateProduct(product, "visible", e.target.checked)} />
-              <img src={value.image} alt="" />
-              <div>
-                <input value={value.name} onChange={e => updateProduct(product, "name", e.target.value)} />
-                <div className="badge-editor">{productBadgeOptions.map(option => <label key={option.key}><input type="checkbox" checked={(value.badges || []).includes(option.key)} onChange={e => {
-                  const badges = e.target.checked ? [...(value.badges || []), option.key] : (value.badges || []).filter(key => key !== option.key);
-                  updateProduct(product, "badges", badges);
-                }} /><span className={`product-badge ${option.key}`}>{option.label}</span></label>)}</div>
-                <input className="image-url" value={value.image} onChange={e => updateProduct(product, "image", e.target.value)} placeholder="圖片網址" />
-              </div>
-              <input value={value.category} onChange={e => updateProduct(product, "category", e.target.value)} />
-              <input type="number" value={value.price} onChange={e => updateProduct(product, "price", Number(e.target.value))} />
-            </div>;
-          })}
-        </div> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;

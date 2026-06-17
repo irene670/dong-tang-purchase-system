@@ -303,7 +303,50 @@ async function saveWooCommerceSettings(user, body) {
   return json({ ok: true });
 }
 
+async function updateWooCommerceProduct(user, body) {
+  if (!user) return json({ error: "Unauthorized" }, 401);
+  const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
+  const settings = rows[0]?.value;
+  if (!settings?.url || !settings?.consumerKey) return json({ error: "WooCommerce API 尚未設定" }, 400);
+
+  const { product } = body;
+  if (!product?.id) return json({ error: "缺少 product.id" }, 400);
+
+  const baseUrl = settings.url.replace(/\/$/, "");
+  const apiPath = `${baseUrl}/wp-json/wc/v3/products/${product.id}`;
+  const authHeader = 'Basic ' + Buffer.from(`${settings.consumerKey}:${settings.consumerSecret}`).toString('base64');
+
+  // Build the update payload (only include fields that are present)
+  const allowed = ['name','sku','status','regular_price','sale_price','date_on_sale_from','date_on_sale_to',
+    'manage_stock','stock_quantity','stock_status','backorders','low_stock_amount',
+    'weight','shipping_class','description','short_description','purchase_note',
+    'featured','reviews_allowed','menu_order'];
+  const payload = {};
+  for (const key of allowed) {
+    if (product[key] !== undefined) payload[key] = product[key];
+  }
+  // Handle dimensions
+  if (product.dim_length !== undefined || product.dim_width !== undefined || product.dim_height !== undefined) {
+    payload.dimensions = { length: product.dim_length ?? '', width: product.dim_width ?? '', height: product.dim_height ?? '' };
+  }
+
+  try {
+    const res = await fetch(apiPath, {
+      method: 'PUT',
+      headers: { 'Authorization': authHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!res.ok) return json({ error: data?.message || "WooCommerce 更新失敗" }, res.status);
+    return json({ ok: true, product: data });
+  } catch (error) {
+    console.error("WooCommerce update error:", error);
+    return json({ error: "更新商品時發生錯誤" }, 500);
+  }
+}
+
 async function fetchWooCommerceProducts(user, req) {
+
   const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
   const settings = rows[0]?.value;
   
@@ -366,6 +409,7 @@ export default async function handler(req) {
     if (req.method === "GET" && route === "bootstrap") return json(await bootstrap(user));
     if (req.method === "GET" && route === "settings" && action === "woocommerce") return getWooCommerceSettings(user);
     if (req.method === "POST" && route === "settings" && action === "woocommerce") return saveWooCommerceSettings(user, body);
+    if (req.method === "POST" && route === "products" && action === "update") return updateWooCommerceProduct(user, body);
     if (req.method === "POST" && route === "orders") return createOrder(user, body);
     if (["saveDealerProfile", "dealer-profile"].includes(action) && ["POST", "PUT"].includes(req.method)) {
       return saveDealerProfile(user, body);
