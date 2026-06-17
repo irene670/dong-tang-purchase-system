@@ -352,7 +352,7 @@ export default async function handler(req) {
   try {
     const route = req.params?.route || req.query?.route || "bootstrap";
     const body = req.method === "GET" ? {} : req.body;
-    const action = body.action || route;
+    const action = body.action || req.query?.action || route;
     
     // Some routes are public
     if (req.method === "GET" && route === "products") {

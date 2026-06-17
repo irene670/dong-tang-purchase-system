@@ -567,7 +567,7 @@ function App() {
         </main>
       ) : view === "orders" ? <DocumentCenter company={user.company} orders={orders} sales={sales.filter(s => s.company === user.company)} products={managedProducts} movements={movements.filter(m => m.company === user.company)} settings={channelSettings} />
         : view === "profile" ? <DealerProfileManager admin={admin} currentCompany={user.company} dealers={dealerRecords} stores={stores} onSaveProfile={saveProfile} onSaveStore={saveStore} />
-        : <AdminPanel content={content} products={products} productEdits={productEdits} channels={channels}
+        : <AdminPanel api={api} content={content} products={products} productEdits={productEdits} channels={channels}
           dealers={dealerRecords} movements={movements} sales={sales} onSave={saveAdmin}
           onSaveInventory={saveInventory} onCreateDealerAccount={createDealerAccount} />}
 
