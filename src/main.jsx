@@ -1440,6 +1440,7 @@ function WarehouseStockManager({ api, focus = {} }) {
   const [selectedId, setSelectedId] = useState("");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState(focus.filter || "all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
@@ -1469,19 +1470,24 @@ function WarehouseStockManager({ api, focus = {} }) {
   }
 
   const selected = products.find(row => row.id === selectedId);
+  const categories = Array.from(new Set(products.map(product => product.category).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-Hant"));
   const visibleProducts = products.filter(product => {
     const currentStock = Number(product.current_stock || 0);
     const safetyStock = Number(product.safety_stock || 0);
     const haystack = `${product.item_no} ${product.name} ${product.category} ${product.barcode} ${product.supplier} ${product.storage_location}`.toLowerCase();
     const matchesQuery = !query || haystack.includes(query.toLowerCase());
+    const matchesCategory = categoryFilter === "all" || product.category === categoryFilter;
     const matchesFilter = filter === "all"
       || (filter === "low" && currentStock > 0 && safetyStock > 0 && currentStock <= safetyStock)
       || (filter === "out" && currentStock <= 0)
+      || (filter === "changedToday" && String(product.last_movement_at || "").slice(0, 10) === new Date().toISOString().slice(0, 10))
       || (filter === "active" && product.active)
       || (filter === "visible" && product.dealer_visible);
-    return matchesQuery && matchesFilter;
+    return matchesQuery && matchesCategory && matchesFilter;
   });
   const totalStock = products.reduce((sum, product) => sum + Number(product.current_stock || 0), 0);
+  const baseStock = products.reduce((sum, product) => sum + Number(product.stock_quantity || 0), 0);
+  const movementStock = products.reduce((sum, product) => sum + Number(product.movement_quantity || 0), 0);
   const lowStock = products.filter(product => Number(product.current_stock || 0) > 0 && Number(product.safety_stock || 0) > 0 && Number(product.current_stock || 0) <= Number(product.safety_stock || 0));
   const outStock = products.filter(product => Number(product.current_stock || 0) <= 0);
   const todayKey = new Date().toISOString().slice(0, 10);
@@ -1524,23 +1530,31 @@ function WarehouseStockManager({ api, focus = {} }) {
 
   return <div className="warehouse-stock-admin">
     <div className="warehouse-hero">
-      <div><span className="eyebrow">WAREHOUSE CONTROL</span><h2>總倉庫存管理</h2><p>商品資料庫就是總倉主檔；這裡負責補貨入庫、領料出庫、盤點修正與低庫存追蹤。</p></div>
+      <div><span className="eyebrow">WAREHOUSE CONTROL</span><h2>總倉庫存管理</h2><p>優先查看各品項庫存水位。庫存計算：商品資料庫庫存 {baseStock.toLocaleString("zh-TW")} ＋ 總倉異動 {movementStock > 0 ? "+" : ""}{movementStock.toLocaleString("zh-TW")} ＝ 目前庫存 {totalStock.toLocaleString("zh-TW")}。</p></div>
       <button className="outline" onClick={() => load(selectedId)} disabled={saving}><RefreshCw /> 重新整理</button>
     </div>
     <div className="warehouse-kpis">
-      <button onClick={() => setFilter("all")}><PackageCheck /><span>總庫存量</span><strong>{totalStock.toLocaleString("zh-TW")}</strong><small>{products.length} 種商品</small></button>
-      <button onClick={() => setFilter("low")}><Clock3 /><span>低庫存警示</span><strong>{lowStock.length}</strong><small>低於或等於安全庫存</small></button>
-      <button onClick={() => setFilter("out")}><Truck /><span>缺貨項目</span><strong>{outStock.length}</strong><small>庫存小於等於 0</small></button>
-      <button><History /><span>今日異動</span><strong>{todayMovements.length}</strong><small>補貨、出庫、盤點</small></button>
+      <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}><PackageCheck /><span>查看全部品項</span><strong>{products.length}</strong><small>目前庫存合計 {totalStock.toLocaleString("zh-TW")}</small></button>
+      <button className={filter === "low" ? "active" : ""} onClick={() => setFilter("low")}><Clock3 /><span>低庫存警示</span><strong>{lowStock.length}</strong><small>低於或等於安全庫存</small></button>
+      <button className={filter === "out" ? "active" : ""} onClick={() => setFilter("out")}><Truck /><span>缺貨項目</span><strong>{outStock.length}</strong><small>庫存小於等於 0</small></button>
+      <button className={filter === "changedToday" ? "active" : ""} onClick={() => setFilter("changedToday")}><History /><span>今日異動商品</span><strong>{todayMovements.length}</strong><small>點擊查看今日有異動品項</small></button>
     </div>
     {message && <div className="woo-sync-message">{message}</div>}
     {error && <div className="woo-error">❌ {error}</div>}
     <div className="warehouse-layout">
       <section className="warehouse-list-card">
+        <div className="warehouse-list-title">
+          <div><h3>品項庫存水位</h3><p>目前顯示 {visibleProducts.length} / {products.length} 種商品，點選任一品項可在右側補貨、出庫或盤點。</p></div>
+          <button className="outline mini" onClick={() => { setQuery(""); setCategoryFilter("all"); setFilter("all"); }}>清除篩選</button>
+        </div>
         <div className="warehouse-toolbar">
           <div className="woo-search"><Search size={16} /><input placeholder="搜尋品號、品名、分類、條碼、供應商、儲位..." value={query} onChange={e => setQuery(e.target.value)} /></div>
+          <select className="warehouse-category-select" value={categoryFilter} onChange={e => setCategoryFilter(e.target.value)}>
+            <option value="all">全部分類</option>
+            {categories.map(category => <option key={category} value={category}>{category}</option>)}
+          </select>
           <div className="woo-filters">
-            {[["all", "全部"], ["low", "低庫存"], ["out", "缺貨"], ["active", "啟用"], ["visible", "經銷商可見"]].map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}</button>)}
+            {[["all", "全部"], ["low", "低庫存"], ["out", "缺貨"], ["changedToday", "今日異動"], ["active", "啟用"], ["visible", "經銷商可見"]].map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}</button>)}
           </div>
         </div>
         <div className="warehouse-table">
