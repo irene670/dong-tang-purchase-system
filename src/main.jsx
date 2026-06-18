@@ -1558,7 +1558,7 @@ function WarehouseStockManager({ api, focus = {} }) {
           </div>
         </div>
         <div className="warehouse-table">
-          <div className="warehouse-table-head"><span>品號</span><span>品名</span><span>分類／儲位</span><span>安全庫存</span><span>目前庫存</span><span>建議補貨</span></div>
+          <div className="warehouse-table-head"><span>品號</span><span>品名</span><span>分類／儲位</span><span>目前庫存</span><span>安全庫存</span><span>建議補貨</span></div>
           {visibleProducts.map(product => {
             const currentStock = Number(product.current_stock || 0);
             const safetyStock = Number(product.safety_stock || 0);
@@ -1568,8 +1568,8 @@ function WarehouseStockManager({ api, focus = {} }) {
               <span><strong>{product.item_no}</strong><small>{product.barcode || "無條碼"}</small></span>
               <span><b>{product.name}</b><small>{product.supplier || "未設定供應商"}</small></span>
               <span>{product.category || "-"}<small>{product.storage_location || "未設定儲位"}</small></span>
-              <span>{safetyStock}</span>
               <span className={statusClass}>{currentStock}</span>
+              <span>{safetyStock}</span>
               <span>{replenish > 0 ? replenish : "-"}</span>
             </button>;
           })}
