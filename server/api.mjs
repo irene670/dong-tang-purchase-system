@@ -92,6 +92,112 @@ async function bootstrap(user) {
   };
 }
 
+const productMasterFields = [
+  "item_no", "name", "unit", "category", "retail_price", "sale_price", "standard_cost",
+  "safety_stock", "stock_quantity", "barcode", "unit_weight", "supplier", "description",
+  "woo_product_id", "woo_sku", "woo_permalink", "dealer_visible", "active", "source"
+];
+
+function toNumber(value, fallback = 0) {
+  const parsed = Number(String(value ?? "").replaceAll(",", "").trim());
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function normalizeMasterProduct(row = {}, source = "manual") {
+  const itemNo = String(row.item_no ?? row.itemNo ?? row["品號"] ?? row.sku ?? "").trim();
+  const name = String(row.name ?? row["品名"] ?? "").trim();
+  return {
+    item_no: itemNo,
+    name,
+    unit: String(row.unit ?? row["單位"] ?? "").trim(),
+    category: String(row.category ?? row["商品分類"] ?? "").trim(),
+    retail_price: toNumber(row.retail_price ?? row.retailPrice ?? row["零售價"]),
+    sale_price: toNumber(row.sale_price ?? row.salePrice ?? row["優惠價"]),
+    standard_cost: toNumber(row.standard_cost ?? row.standardCost ?? row["標準進價"]),
+    safety_stock: Math.round(toNumber(row.safety_stock ?? row.safetyStock ?? row["安全存量"])),
+    stock_quantity: Math.round(toNumber(row.stock_quantity ?? row.stockQuantity ?? row["庫存量"])),
+    barcode: String(row.barcode ?? row["條碼編號"] ?? "").trim(),
+    unit_weight: toNumber(row.unit_weight ?? row.unitWeight ?? row["單位淨重"]),
+    supplier: String(row.supplier ?? row["主供應商"] ?? "").trim(),
+    description: String(row.description ?? row["商品描述"] ?? "").trim(),
+    woo_product_id: row.woo_product_id || row.wooProductId ? Number(row.woo_product_id ?? row.wooProductId) : null,
+    woo_sku: String(row.woo_sku ?? row.wooSku ?? "").trim(),
+    woo_permalink: String(row.woo_permalink ?? row.wooPermalink ?? "").trim(),
+    dealer_visible: Boolean(row.dealer_visible ?? row.dealerVisible ?? false),
+    active: row.active === undefined ? true : Boolean(row.active),
+    source
+  };
+}
+
+async function syncMasterWooLinks() {
+  const wooRows = await db.sql`SELECT product_id, sku, payload FROM woocommerce_product_cache`;
+  let linked = 0;
+  for (const woo of wooRows) {
+    const sku = String(woo.sku || woo.payload?.sku || "").trim();
+    if (!sku) continue;
+    const updated = await db.sql`
+      UPDATE product_master SET woo_product_id=${Number(woo.product_id)}, woo_sku=${sku},
+        woo_permalink=${woo.payload?.permalink || ''}, updated_at=now()
+      WHERE item_no=${sku} OR barcode=${sku} OR woo_sku=${sku}
+      RETURNING id`;
+    linked += updated.length;
+  }
+  return { wooCount: wooRows.length, linked };
+}
+
+async function listMasterProducts(user) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const rows = await db.sql`SELECT * FROM product_master ORDER BY item_no`;
+  return json({ ok: true, products: rows });
+}
+
+async function saveMasterProducts(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const rows = Array.isArray(body.products) ? body.products : [];
+  if (!rows.length) return json({ error: "沒有可儲存的商品資料" }, 400);
+  let saved = 0;
+  for (const input of rows) {
+    const product = normalizeMasterProduct(input, input.source || "manual");
+    if (!product.item_no || !product.name) continue;
+    await db.sql`
+      INSERT INTO product_master
+        (item_no, name, unit, category, retail_price, sale_price, standard_cost, safety_stock,
+          stock_quantity, barcode, unit_weight, supplier, description, woo_product_id, woo_sku,
+          woo_permalink, dealer_visible, active, source, updated_at)
+      VALUES (${product.item_no}, ${product.name}, ${product.unit}, ${product.category},
+        ${product.retail_price}, ${product.sale_price}, ${product.standard_cost}, ${product.safety_stock},
+        ${product.stock_quantity}, ${product.barcode}, ${product.unit_weight}, ${product.supplier},
+        ${product.description}, ${product.woo_product_id}, ${product.woo_sku}, ${product.woo_permalink},
+        ${product.dealer_visible}, ${product.active}, ${product.source}, now())
+      ON CONFLICT (item_no) DO UPDATE SET name=EXCLUDED.name, unit=EXCLUDED.unit,
+        category=EXCLUDED.category, retail_price=EXCLUDED.retail_price, sale_price=EXCLUDED.sale_price,
+        standard_cost=EXCLUDED.standard_cost, safety_stock=EXCLUDED.safety_stock,
+        stock_quantity=EXCLUDED.stock_quantity, barcode=EXCLUDED.barcode,
+        unit_weight=EXCLUDED.unit_weight, supplier=EXCLUDED.supplier, description=EXCLUDED.description,
+        woo_product_id=COALESCE(EXCLUDED.woo_product_id, product_master.woo_product_id),
+        woo_sku=COALESCE(NULLIF(EXCLUDED.woo_sku, ''), product_master.woo_sku),
+        woo_permalink=COALESCE(NULLIF(EXCLUDED.woo_permalink, ''), product_master.woo_permalink),
+        dealer_visible=EXCLUDED.dealer_visible, active=EXCLUDED.active,
+        source=EXCLUDED.source, updated_at=now()`;
+    saved += 1;
+  }
+  if (body.fileName) {
+    await db.sql`
+      INSERT INTO product_master_imports (file_name, row_count, created_by)
+      VALUES (${String(body.fileName)}, ${saved}, ${user.email})`;
+  }
+  const sync = await syncMasterWooLinks();
+  return json({ ok: true, saved, ...sync });
+}
+
+async function productMasterAction(user, body) {
+  if (body.action === "syncWoo") {
+    if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+    return json({ ok: true, ...(await syncMasterWooLinks()) });
+  }
+  return saveMasterProducts(user, body);
+}
+
 async function createOrder(user, body) {
   const dealer = await dealerFor(user);
   if (!Array.isArray(body.items) || !body.items.length) return json({ error: "採購清單不可為空" }, 400);
@@ -513,6 +619,7 @@ async function upsertWooProductCache(products) {
       ON CONFLICT (product_id) DO UPDATE SET payload=EXCLUDED.payload, status=EXCLUDED.status,
         sku=EXCLUDED.sku, name=EXCLUDED.name, synced_at=EXCLUDED.synced_at, updated_at=now()`;
   }
+  await syncMasterWooLinks();
 }
 
 async function saveWooSyncMeta(count) {
@@ -578,6 +685,8 @@ export default async function handler(req) {
     if (req.method === "GET" && route === "bootstrap") return json(await bootstrap(user));
     if (req.method === "GET" && route === "settings" && action === "woocommerce") return getWooCommerceSettings(user);
     if (req.method === "POST" && route === "settings" && action === "woocommerce") return saveWooCommerceSettings(user, body);
+    if (req.method === "GET" && route === "master-products") return listMasterProducts(user);
+    if (req.method === "POST" && route === "master-products") return productMasterAction(user, body);
     if (req.method === "POST" && route === "products" && action === "sync") return syncWooCommerceProducts(user);
     if (req.method === "POST" && route === "products" && action === "update") return updateWooCommerceProduct(user, body);
     if (req.method === "POST" && route === "orders") return createOrder(user, body);

@@ -8,7 +8,7 @@ import {
   Search, ShoppingBag, Plus, Minus, Trash2, ChevronRight,
   PackageCheck, Truck, ClipboardCheck, FileDown, LogOut, UserRound,
   RefreshCw, CheckCircle2, Clock3, Menu, Megaphone, Store, CalendarDays,
-  LayoutDashboard, Save, Image, Settings
+  LayoutDashboard, Save, Image, Settings, Database
   , Warehouse, FileText, History, SlidersHorizontal, Upload
 } from "lucide-react";
 import { calculatePricing, normalizePricingSettings, pricingDescription } from "../shared/pricing.mjs";
@@ -894,6 +894,201 @@ function ProfileInput({ label, value = "", onChange, area, className = "", type 
   return <label className={`profile-input ${className}`}><span>{label}</span>{area ? <textarea value={value} onChange={e => onChange(e.target.value)} /> : <input type={type} value={value} onChange={e => onChange(e.target.value)} />}</label>;
 }
 
+const masterHeaderMap = {
+  "品號": "item_no",
+  "品名": "name",
+  "單位": "unit",
+  "商品分類": "category",
+  "零售價": "retail_price",
+  "優惠價": "sale_price",
+  "標準進價": "standard_cost",
+  "安全存量": "safety_stock",
+  "庫存量": "stock_quantity",
+  "條碼編號": "barcode",
+  "單位淨重": "unit_weight",
+  "主供應商": "supplier",
+  "商品描述": "description"
+};
+
+function ProductMasterManager({ api }) {
+  const [products, setProducts] = useState([]);
+  const [preview, setPreview] = useState([]);
+  const [fileName, setFileName] = useState("");
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState("all");
+  const [editMap, setEditMap] = useState({});
+
+  useEffect(() => { load(); }, []);
+
+  async function load() {
+    setLoading(true);
+    try {
+      const data = await api("master-products");
+      setProducts(Array.isArray(data.products) ? data.products : []);
+    } catch (err) {
+      setError(err.message || "商品主檔載入失敗");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function parseExcel(file) {
+    setError("");
+    setMessage("");
+    setPreview([]);
+    setFileName(file?.name || "");
+    if (!file || !/\.xlsx$/i.test(file.name)) {
+      setError("請選擇 .xlsx 商品資料檔");
+      return;
+    }
+    try {
+      const { default: readXlsxFile } = await import("read-excel-file/browser");
+      const result = await readXlsxFile(file);
+      const excelRows = Array.isArray(result?.[0]?.data) ? result[0].data : result;
+      const headers = (excelRows[0] || []).map(v => String(v ?? "").trim());
+      const required = ["品號", "品名", "零售價"];
+      const missing = required.filter(h => !headers.includes(h));
+      if (missing.length) throw new Error(`缺少必要欄位：${missing.join("、")}`);
+      const rows = excelRows.slice(1).map((row, index) => {
+        const item = { rowNumber: index + 2, dealer_visible: false, active: true, source: "excel" };
+        headers.forEach((header, columnIndex) => {
+          const key = masterHeaderMap[header];
+          if (key) item[key] = row[columnIndex] ?? "";
+        });
+        item.item_no = String(item.item_no ?? "").trim();
+        item.name = String(item.name ?? "").trim();
+        ["retail_price", "sale_price", "standard_cost", "safety_stock", "stock_quantity", "unit_weight"].forEach(key => {
+          item[key] = Number(String(item[key] ?? 0).replaceAll(",", "")) || 0;
+        });
+        return item;
+      }).filter(item => item.item_no && item.name);
+      setPreview(rows);
+      setMessage(`已解析 ${rows.length} 筆，確認後會寫入線上商品主檔。`);
+    } catch (err) {
+      setError(err.message || "Excel 解析失敗");
+    }
+  }
+
+  async function importPreview() {
+    if (!preview.length) return;
+    setSaving(true);
+    setError("");
+    try {
+      let saved = 0;
+      for (let i = 0; i < preview.length; i += 300) {
+        const chunk = preview.slice(i, i + 300);
+        const res = await api("master-products", {
+          method: "POST",
+          body: JSON.stringify({ action: "import", fileName, products: chunk })
+        });
+        saved += Number(res.saved || 0);
+      }
+      setPreview([]);
+      setMessage(`商品主檔已更新 ${saved} 筆，並自動對應已同步 WooCommerce 商品。`);
+      await load();
+    } catch (err) {
+      setError(err.message || "匯入失敗");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function syncWooLinks() {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await api("master-products", { method: "POST", body: JSON.stringify({ action: "syncWoo" }) });
+      setMessage(`Woo 對應完成：目前 Woo ${res.wooCount || 0} 筆，已對應主檔 ${res.linked || 0} 筆。`);
+      await load();
+    } catch (err) {
+      setError(err.message || "Woo 對應失敗");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function update(id, field, value) {
+    setEditMap(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }));
+  }
+
+  async function saveRow(product) {
+    const edit = editMap[product.id] || {};
+    setSaving(true);
+    try {
+      const res = await api("master-products", {
+        method: "POST",
+        body: JSON.stringify({ action: "save", products: [{ ...product, ...edit }] })
+      });
+      setProducts(prev => prev.map(row => row.id === product.id ? { ...row, ...edit } : row));
+      setEditMap(prev => { const next = { ...prev }; delete next[product.id]; return next; });
+      setMessage(`已儲存 1 筆商品主檔。Woo 對應 ${res.linked || 0} 筆。`);
+    } catch (err) {
+      setError(err.message || "儲存失敗");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const filtered = products.filter(product => {
+    const haystack = `${product.item_no} ${product.name} ${product.category} ${product.barcode} ${product.supplier}`.toLowerCase();
+    const matchQuery = !query || haystack.includes(query.toLowerCase());
+    const matchFilter = filter === "all"
+      || (filter === "linked" && product.woo_product_id)
+      || (filter === "unlinked" && !product.woo_product_id)
+      || (filter === "visible" && product.dealer_visible)
+      || (filter === "inactive" && !product.active);
+    return matchQuery && matchFilter;
+  });
+
+  if (loading) return <div className="woo-loading"><RefreshCw className="spin-icon" /> 正在載入商品主檔...</div>;
+
+  return <div className="master-products">
+    <div className="master-intro">
+      <div><h2>商品資料庫</h2><p>保存完整內部商品主檔，可包含未上官網商品；WooCommerce 同步後會用 SKU / 品號自動建立對應。</p></div>
+      <button className="outline" disabled={saving} onClick={syncWooLinks}><RefreshCw /> 對應 Woo 商品</button>
+    </div>
+    <div className="master-import">
+      <label className="upload-field"><Upload /> 選擇商品 Excel<input type="file" accept=".xlsx" onChange={e => parseExcel(e.target.files?.[0])} /></label>
+      {fileName && <span>檔案：<strong>{fileName}</strong></span>}
+      <button className="primary" disabled={!preview.length || saving} onClick={importPreview}>{saving ? "處理中..." : `確認匯入 ${preview.length || 0} 筆`}</button>
+    </div>
+    {message && <div className="woo-sync-message">{message}</div>}
+    {error && <div className="woo-error">❌ {error}</div>}
+    {preview.length > 0 && <div className="master-preview">預覽：{preview.slice(0, 5).map(row => <span key={row.rowNumber}>{row.item_no}｜{row.name}</span>)}{preview.length > 5 && <b>另有 {preview.length - 5} 筆...</b>}</div>}
+    <div className="woo-toolbar">
+      <div className="woo-search"><Search size={16} /><input placeholder="搜尋品號、品名、分類、條碼、供應商..." value={query} onChange={e => setQuery(e.target.value)} /></div>
+      <div className="woo-filters">
+        {[["all", "全部"], ["linked", "已對應 Woo"], ["unlinked", "未對應 Woo"], ["visible", "經銷商可見"], ["inactive", "停用"]].map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}</button>)}
+      </div>
+    </div>
+    <div className="master-table table-scroll">
+      <div className="master-head"><span>狀態</span><span>品號／品名</span><span>分類</span><span>價格</span><span>庫存</span><span>條碼／供應商</span><span>Woo</span><span>操作</span></div>
+      {filtered.map(product => {
+        const edit = editMap[product.id] || {};
+        const current = { ...product, ...edit };
+        return <div className="master-row" key={product.id}>
+          <span className="master-checks">
+            <label><input type="checkbox" checked={Boolean(current.active)} onChange={e => update(product.id, "active", e.target.checked)} /> 啟用</label>
+            <label><input type="checkbox" checked={Boolean(current.dealer_visible)} onChange={e => update(product.id, "dealer_visible", e.target.checked)} /> 經銷商可見</label>
+          </span>
+          <span><input value={current.item_no || ""} onChange={e => update(product.id, "item_no", e.target.value)} /><textarea value={current.name || ""} onChange={e => update(product.id, "name", e.target.value)} /></span>
+          <span><input value={current.category || ""} onChange={e => update(product.id, "category", e.target.value)} /><small>單位：<input value={current.unit || ""} onChange={e => update(product.id, "unit", e.target.value)} /></small></span>
+          <span><input type="number" value={current.retail_price || 0} onChange={e => update(product.id, "retail_price", Number(e.target.value))} /><small>優惠 <input type="number" value={current.sale_price || 0} onChange={e => update(product.id, "sale_price", Number(e.target.value))} /></small></span>
+          <span><input type="number" value={current.stock_quantity || 0} onChange={e => update(product.id, "stock_quantity", Number(e.target.value))} /><small>安全 <input type="number" value={current.safety_stock || 0} onChange={e => update(product.id, "safety_stock", Number(e.target.value))} /></small></span>
+          <span><input value={current.barcode || ""} onChange={e => update(product.id, "barcode", e.target.value)} /><small><input value={current.supplier || ""} onChange={e => update(product.id, "supplier", e.target.value)} placeholder="主供應商" /></small></span>
+          <span>{current.woo_product_id ? <><b>#{current.woo_product_id}</b>{current.woo_permalink && <a href={current.woo_permalink} target="_blank" rel="noreferrer">查看官網</a>}</> : <em>未對應</em>}</span>
+          <span><button className="primary" disabled={saving || !editMap[product.id]} onClick={() => saveRow(product)}><Save /> 儲存</button></span>
+        </div>;
+      })}
+      {!filtered.length && <div className="woo-empty">沒有符合條件的商品主檔</div>}
+    </div>
+  </div>;
+}
+
 function WooProductManager({ api }) {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -1293,7 +1488,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
     <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">帳號、內容、訂單與正式營運資料由目前的 GCP 伺服器與 PostgreSQL 資料庫集中管理。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 商品管理</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
+      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button><button className={tab === "masterProducts" ? "active" : ""} onClick={() => setTab("masterProducts")}><Database /> 商品資料庫</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 官網商品同步</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
       <section className="admin-content">
         {tab === "api" ? <WooCommerceSettings api={api} /> : tab === "home" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
@@ -1310,7 +1505,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} onUpdate={onUpdateOrder} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} onUpdate={onUpdateOrder} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
