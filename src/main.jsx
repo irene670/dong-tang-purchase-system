@@ -882,7 +882,7 @@ function App() {
         <main className="purchase-page">
           <section className="purchase-heading">
             <div><span className="eyebrow">B2B QUICK ORDER</span><h1>快速採購單</h1><p>搜尋商品並直接填寫數量，右側清單會同步更新。</p></div>
-            <div className="sync-state"><CheckCircle2 /> 官網商品已同步</div>
+            <div className="sync-state"><CheckCircle2 /> 已讀取總倉庫存商品</div>
           </section>
           <section className="purchase-workspace">
             <div className="product-browser">
@@ -897,7 +897,7 @@ function App() {
               <div><Warehouse /><span>顯示通路目前已有庫存紀錄的商品</span></div>
               <label><input type="checkbox" checked={lowStockOnly} onChange={e => setLowStockOnly(e.target.checked)} /> 只看缺貨／低庫存（5 件以下）</label>
             </div>}
-            {loading ? <div className="loading"><RefreshCw /> 正在同步官網商品...</div> : (
+            {loading ? <div className="loading"><RefreshCw /> 正在讀取總倉商品...</div> : (
               <div className="product-table">
                 <div className="product-table-head"><span>商品</span><span>品名／品號</span><span>分類</span><span>單價</span><span>採購數量</span></div>
                 {category === "常用採購" && shown.length === 0 ? <div className="frequent-empty"><Clock3 /><h3>目前還沒有歷史採購品項</h3><p>完成第一筆訂單後，曾採購的商品會自動整理到這裡。</p><button onClick={() => setCategory("全部商品")}>瀏覽全部商品</button></div> : category === "既有庫存" && shown.length === 0 ? <div className="frequent-empty"><Warehouse /><h3>{lowStockOnly ? "目前沒有缺貨或低庫存商品" : "目前沒有寄售庫存紀錄"}</h3><p>{lowStockOnly ? "目前庫存水位正常，可以取消篩選查看全部既有庫存。" : "商品出貨並加入寄售庫存後，會自動整理到這裡。"}</p>{lowStockOnly && <button onClick={() => setLowStockOnly(false)}>查看全部既有庫存</button>}</div> : shown.map(product => (
@@ -1516,15 +1516,12 @@ function WarehouseStockManager({ api, focus = {} }) {
     setImporting(true);
     setError("");
     try {
-      let saved = 0;
-      for (let i = 0; i < preview.length; i += 300) {
-        const chunk = preview.slice(i, i + 300);
-        const res = await api("master-products", {
-          method: "POST",
-          body: JSON.stringify({ action: "import", fileName, products: chunk })
-        });
-        saved += Number(res.saved || 0);
-      }
+      const res = await api("master-products", {
+        method: "POST",
+        timeoutMs: 60000,
+        body: JSON.stringify({ action: "import", fileName, products: preview })
+      });
+      const saved = Number(res.saved || 0);
       setPreview([]);
       setFileName("");
       setMessage(`已匯入 ${saved} 筆商品到總倉庫存主檔。`);

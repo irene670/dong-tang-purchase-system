@@ -380,8 +380,7 @@ async function saveMasterProducts(user, body) {
       INSERT INTO product_master_imports (file_name, row_count, created_by)
       VALUES (${String(body.fileName)}, ${saved}, ${user.email})`;
   }
-  const sync = await syncMasterWooLinks();
-  return json({ ok: true, saved, ...sync });
+  return json({ ok: true, saved });
 }
 
 async function productMasterAction(user, body) {
@@ -1677,27 +1676,48 @@ async function updateWooCommerceProduct(user, body) {
 
 async function fetchWooCommerceProducts(user, req) {
   const cached = await db.sql`
-    SELECT c.product_id, c.payload, o.visible AS override_visible,
-      pm.item_no, pm.barcode, pm.unit, pm.supplier, pm.dealer_visible, pm.active AS master_active
-    FROM woocommerce_product_cache c
-    LEFT JOIN product_overrides o ON o.product_id=c.product_id
-    LEFT JOIN product_master pm ON pm.woo_product_id=c.product_id
-    ORDER BY c.product_id`;
+    SELECT pm.*,
+      COALESCE(SUM(wm.quantity), 0)::integer AS movement_quantity,
+      (pm.stock_quantity + COALESCE(SUM(wm.quantity), 0))::integer AS current_stock,
+      o.visible AS override_visible,
+      o.image_url AS override_image,
+      o.badges AS override_badges,
+      c.payload AS woo_payload
+    FROM product_master pm
+    LEFT JOIN warehouse_movements wm
+      ON wm.product_master_id=pm.id
+      OR (pm.woo_product_id IS NOT NULL AND wm.product_id=pm.woo_product_id)
+    LEFT JOIN product_overrides o ON o.product_id=pm.woo_product_id
+    LEFT JOIN woocommerce_product_cache c ON c.product_id=pm.woo_product_id
+    WHERE pm.active=true
+    GROUP BY pm.id, o.visible, o.image_url, o.badges, c.payload
+    ORDER BY pm.item_no`;
   const adminView = user && isAdmin(user);
   const rows = adminView ? cached : cached.filter(row => {
     if (row.override_visible === false) return false;
-    if (row.master_active === false) return false;
     if (row.dealer_visible === false) return false;
     return true;
   });
   return json(rows.map(row => ({
-    ...row.payload,
-    item_no: row.item_no || row.payload?.sku || String(row.product_id),
-    barcode: row.barcode || '',
-    unit: row.unit || '',
+    id: row.woo_product_id || row.item_no,
+    sku: row.item_no,
+    item_no: row.item_no,
+    barcode: row.barcode || row.item_no,
+    unit: row.unit || 'pcs',
     supplier: row.supplier || '',
+    name: row.name,
+    price: Number(row.retail_price || row.sale_price || 0),
+    regular_price: Number(row.retail_price || 0),
+    category: row.category || '總倉商品',
+    categories: [{ name: row.category || '總倉商品' }],
+    images: [{ src: row.override_image || row.woo_payload?.images?.[0]?.src || '' }],
+    current_stock: Number(row.current_stock || 0),
+    safety_stock: Number(row.safety_stock || 0),
+    storage_location: row.storage_location || '',
+    woo_permalink: row.woo_permalink || row.woo_payload?.permalink || '',
     dealer_visible: row.dealer_visible !== false,
-    visible: row.override_visible !== false
+    visible: row.override_visible !== false,
+    badges: row.override_badges || []
   })));
 }
 
