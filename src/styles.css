@@ -559,19 +559,31 @@
 .warehouse-hero h2{font-family:"Shippori Mincho";font-size:30px;margin:3px 0}
 .warehouse-hero p{margin:0;color:#737d79;line-height:1.6;max-width:980px;font-size:13px}
 .warehouse-hero .outline{border:1px solid var(--green);background:#fff;color:var(--green);padding:12px 18px;font-weight:800;display:flex;align-items:center;gap:8px}
-.warehouse-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.warehouse-kpis button{border:1px solid var(--line);background:#fff;text-align:left;padding:13px 14px;display:grid;gap:5px;transition:.15s;cursor:pointer}
-.warehouse-kpis button:hover,.warehouse-kpis button.active{box-shadow:0 10px 22px rgba(23,59,53,.08);transform:translateY(-1px);border-color:var(--orange);background:#fffaf6}
-.warehouse-kpis svg{color:var(--orange);width:20px;height:20px}
-.warehouse-kpis span{font-size:11px;color:#73807c;font-weight:800}
-.warehouse-kpis strong{font-family:"Shippori Mincho";font-size:25px}
-.warehouse-kpis small{color:#7a8581}
+.warehouse-hero-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;min-width:360px}
+.warehouse-hero-actions .outline{margin:0;white-space:nowrap}
+.warehouse-hero-actions .quiet{opacity:.72}
+.upload-inline{position:relative;cursor:pointer}
+.upload-inline input{position:absolute;inset:0;opacity:0;cursor:pointer}
+.warehouse-import-panel{background:#fff8f3;border:1px solid #edc0a8;border-left:4px solid var(--orange);padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:14px}
+.warehouse-import-panel.stacked{display:grid;gap:12px}
+.warehouse-import-panel strong{font-family:"Shippori Mincho";font-size:20px;color:var(--green)}
+.warehouse-import-panel p{margin:4px 0 0;color:#7b716b;font-size:12px}
+.warehouse-import-panel .primary{width:auto;margin:0;padding:11px 16px}
+.warehouse-missing-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;max-height:210px;overflow:auto}
+.warehouse-missing-list label{display:grid;grid-template-columns:20px 1fr;gap:8px;align-items:flex-start;background:#fff;border:1px solid #ead6ca;padding:8px}
+.warehouse-missing-list input{width:16px;height:16px;margin-top:2px}
+.warehouse-missing-list b{display:inline-block;margin-right:6px;color:var(--green)}
+.warehouse-missing-list span{font-size:12px;line-height:1.45}
 .warehouse-layout{display:grid;grid-template-columns:minmax(0,1.45fr) 430px;gap:18px;align-items:start}
 .warehouse-list-card,.warehouse-detail-card,.warehouse-bottom-grid>div{background:#fff;border:1px solid var(--line)}
 .warehouse-list-title{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:14px 16px;border-bottom:1px solid var(--line);background:#fbfaf6}
 .warehouse-list-title h3{font-family:"Shippori Mincho";font-size:24px;margin:0 0 4px}
 .warehouse-list-title p{margin:0;color:#727b77;font-size:12px}
 .warehouse-list-title .outline.mini{border:1px solid var(--green);background:#fff;color:var(--green);font-weight:800;padding:8px 12px;white-space:nowrap}
+.warehouse-quick-tabs{display:flex;gap:8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line)}
+.warehouse-quick-tabs button{border:1px solid var(--line);background:#fff;color:var(--green);padding:8px 11px;font-weight:800;display:flex;align-items:center;gap:6px}
+.warehouse-quick-tabs button.active{background:var(--green);color:#fff;border-color:var(--green)}
+.warehouse-quick-tabs svg{width:15px;height:15px}
 .warehouse-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) 190px;gap:8px;padding:10px 12px;border-bottom:1px solid var(--line);align-items:center}
 .warehouse-toolbar .woo-filters{grid-column:1 / -1}
 .warehouse-category-select{width:100%;border:1px solid #d5d2cb;background:#fff;padding:12px;font-weight:800;color:var(--green)}
@@ -665,7 +677,7 @@
 .sales-row-actions svg{width:14px}
 
 @media(max-width:850px){
-  .partner-action-grid,.dashboard-cards,.dashboard-panels,.document-kpis,.consignment-kpis,.warehouse-kpis,.warehouse-layout,.warehouse-bottom-grid{grid-template-columns:1fr}
+  .partner-action-grid,.dashboard-cards,.dashboard-panels,.document-kpis,.consignment-kpis,.warehouse-layout,.warehouse-bottom-grid,.warehouse-missing-list{grid-template-columns:1fr}
   .dashboard-hero{display:block}
   .dashboard-hero h2{font-size:28px}
   .admin-menu{overflow:auto;align-items:stretch}
@@ -674,6 +686,7 @@
   .next-step-banner .primary{width:100%}
   .dashboard-row{grid-template-columns:1fr}
   .warehouse-hero{display:block}
+  .warehouse-hero-actions{min-width:0;justify-content:flex-start;margin-top:12px}
   .warehouse-detail-card{position:static}
   .warehouse-table{overflow:auto}
   .warehouse-table-head,.warehouse-product-row{grid-template-columns:70px minmax(160px,1.5fr) minmax(96px,.8fr) 56px 56px 56px;gap:5px;font-size:11px}

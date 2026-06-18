@@ -1443,8 +1443,13 @@ function WarehouseStockManager({ api, focus = {} }) {
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [importing, setImporting] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [fileName, setFileName] = useState("");
+  const [preview, setPreview] = useState([]);
+  const [masterDiff, setMasterDiff] = useState({ missing: [], stockMismatches: [] });
+  const [selectedMissing, setSelectedMissing] = useState([]);
   const [form, setForm] = useState({ movementType: "補貨入庫", quantity: 1, actualQuantity: 0, note: "" });
 
   useEffect(() => { load(); }, []);
@@ -1466,6 +1471,110 @@ function WarehouseStockManager({ api, focus = {} }) {
       setError(err.message || "總倉庫存載入失敗");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function parseWarehouseExcel(file) {
+    setError("");
+    setMessage("");
+    setPreview([]);
+    setFileName(file?.name || "");
+    if (!file || !/\.xlsx$/i.test(file.name)) {
+      setError("請選擇 .xlsx 商品資料檔");
+      return;
+    }
+    try {
+      const { default: readXlsxFile } = await import("read-excel-file/browser");
+      const result = await readXlsxFile(file);
+      const excelRows = Array.isArray(result?.[0]?.data) ? result[0].data : result;
+      const headers = (excelRows[0] || []).map(v => String(v ?? "").trim());
+      const required = ["品號", "品名"];
+      const missing = required.filter(h => !headers.includes(h));
+      if (missing.length) throw new Error(`缺少必要欄位：${missing.join("、")}`);
+      const rows = excelRows.slice(1).map((row, index) => {
+        const item = { rowNumber: index + 2, dealer_visible: false, active: true, source: "excel" };
+        headers.forEach((header, columnIndex) => {
+          const key = masterHeaderMap[header];
+          if (key) item[key] = row[columnIndex] ?? "";
+        });
+        item.item_no = String(item.item_no ?? "").trim();
+        item.name = String(item.name ?? "").trim();
+        ["retail_price", "sale_price", "standard_cost", "safety_stock", "stock_quantity", "unit_weight"].forEach(key => {
+          item[key] = Number(String(item[key] ?? 0).replaceAll(",", "")) || 0;
+        });
+        return item;
+      }).filter(item => item.item_no && item.name);
+      setPreview(rows);
+      setMessage(`已解析 ${rows.length} 筆商品，確認後會直接併入總倉庫存主檔。`);
+    } catch (err) {
+      setError(err.message || "Excel 解析失敗");
+    }
+  }
+
+  async function importWarehousePreview() {
+    if (!preview.length) return;
+    setImporting(true);
+    setError("");
+    try {
+      let saved = 0;
+      for (let i = 0; i < preview.length; i += 300) {
+        const chunk = preview.slice(i, i + 300);
+        const res = await api("master-products", {
+          method: "POST",
+          body: JSON.stringify({ action: "import", fileName, products: chunk })
+        });
+        saved += Number(res.saved || 0);
+      }
+      setPreview([]);
+      setFileName("");
+      setMessage(`已匯入 ${saved} 筆商品到總倉庫存主檔。`);
+      await load(selectedId);
+    } catch (err) {
+      setError(err.message || "匯入總倉品項失敗");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  async function importWooProducts() {
+    setImporting(true);
+    setError("");
+    setMessage("正在從官網讀取商品，完成後會列出需要新增到總倉的品項。");
+    try {
+      const result = await api("products", { method: "POST", body: JSON.stringify({ action: "sync" }) });
+      const diff = result.masterDiff || { missing: [], stockMismatches: [] };
+      setMasterDiff(diff);
+      setSelectedMissing((diff.missing || []).map(item => item.productId));
+      setMessage(`官網商品已讀取 ${result.count || 0} 筆。${diff.missing?.length ? `有 ${diff.missing.length} 筆尚未在總倉建立，請確認後新增。` : "官網商品都已對應總倉品項。"}`);
+    } catch (err) {
+      setError(err.message || "官網商品導入失敗");
+      setMessage("");
+    } finally {
+      setImporting(false);
+    }
+  }
+
+  function toggleMissing(productId) {
+    setSelectedMissing(prev => prev.includes(productId) ? prev.filter(id => id !== productId) : [...prev, productId]);
+  }
+
+  async function createMissingWarehouseProducts() {
+    if (!selectedMissing.length) return;
+    setImporting(true);
+    setError("");
+    try {
+      const result = await api("master-products", {
+        method: "POST",
+        body: JSON.stringify({ action: "createFromWoo", productIds: selectedMissing })
+      });
+      setMasterDiff({ missing: result.missing || [], stockMismatches: result.stockMismatches || [] });
+      setSelectedMissing((result.missing || []).map(item => item.productId));
+      setMessage(`已新增 ${result.created || 0} 筆官網商品到總倉；新增品項庫存預設為 0，請再做補貨或盤點。`);
+      await load(selectedId);
+    } catch (err) {
+      setError(err.message || "新增官網商品到總倉失敗");
+    } finally {
+      setImporting(false);
     }
   }
 
@@ -1530,22 +1639,40 @@ function WarehouseStockManager({ api, focus = {} }) {
 
   return <div className="warehouse-stock-admin">
     <div className="warehouse-hero">
-      <div><span className="eyebrow">WAREHOUSE CONTROL</span><h2>總倉庫存管理</h2><p>優先查看各品項庫存水位。庫存計算：商品資料庫庫存 {baseStock.toLocaleString("zh-TW")} ＋ 總倉異動 {movementStock > 0 ? "+" : ""}{movementStock.toLocaleString("zh-TW")} ＝ 目前庫存 {totalStock.toLocaleString("zh-TW")}。</p></div>
-      <button className="outline" onClick={() => load(selectedId)} disabled={saving}><RefreshCw /> 重新整理</button>
-    </div>
-    <div className="warehouse-kpis">
-      <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}><PackageCheck /><span>查看全部品項</span><strong>{products.length}</strong><small>目前庫存合計 {totalStock.toLocaleString("zh-TW")}</small></button>
-      <button className={filter === "low" ? "active" : ""} onClick={() => setFilter("low")}><Clock3 /><span>低庫存警示</span><strong>{lowStock.length}</strong><small>低於或等於安全庫存</small></button>
-      <button className={filter === "out" ? "active" : ""} onClick={() => setFilter("out")}><Truck /><span>缺貨項目</span><strong>{outStock.length}</strong><small>庫存小於等於 0</small></button>
-      <button className={filter === "changedToday" ? "active" : ""} onClick={() => setFilter("changedToday")}><History /><span>今日異動商品</span><strong>{todayMovements.length}</strong><small>點擊查看今日有異動品項</small></button>
+      <div><span className="eyebrow">WAREHOUSE CONTROL</span><h2>總倉庫存管理</h2><p>商品資料、官網導入與庫存水位統一在這裡管理。庫存計算：主檔 {baseStock.toLocaleString("zh-TW")} ＋ 異動 {movementStock > 0 ? "+" : ""}{movementStock.toLocaleString("zh-TW")} ＝ 目前 {totalStock.toLocaleString("zh-TW")}。</p></div>
+      <div className="warehouse-hero-actions">
+        <button className="outline" onClick={importWooProducts} disabled={importing}><RefreshCw /> {importing ? "處理中..." : "從官網導入商品"}</button>
+        <label className="outline upload-inline"><Upload /> 匯入 Excel<input type="file" accept=".xlsx" onChange={e => parseWarehouseExcel(e.target.files?.[0])} /></label>
+        <button className="outline quiet" onClick={() => load(selectedId)} disabled={saving}><RefreshCw /> 重新整理</button>
+      </div>
     </div>
     {message && <div className="woo-sync-message">{message}</div>}
     {error && <div className="woo-error">❌ {error}</div>}
+    {preview.length > 0 && <div className="warehouse-import-panel">
+      <div><strong>Excel 匯入預覽</strong><p>{fileName}，共 {preview.length} 筆。將直接併入總倉庫存主檔。</p></div>
+      <button className="primary" disabled={importing} onClick={importWarehousePreview}>確認匯入</button>
+    </div>}
+    {masterDiff.missing?.length > 0 && <div className="warehouse-import-panel stacked">
+      <div><strong>官網有新商品尚未建立到總倉</strong><p>請勾選要新增的品項。新增後庫存預設為 0，不會用 Woo 庫存覆蓋總倉。</p></div>
+      <div className="warehouse-missing-list">
+        {masterDiff.missing.slice(0, 18).map(item => <label key={item.productId}>
+          <input type="checkbox" checked={selectedMissing.includes(item.productId)} onChange={() => toggleMissing(item.productId)} />
+          <span><b>{item.sku}</b>{item.name}</span>
+        </label>)}
+      </div>
+      <button className="primary" disabled={importing || !selectedMissing.length} onClick={createMissingWarehouseProducts}>新增選取品項到總倉</button>
+    </div>}
     <div className="warehouse-layout">
       <section className="warehouse-list-card">
         <div className="warehouse-list-title">
           <div><h3>品項庫存水位</h3><p>目前顯示 {visibleProducts.length} / {products.length} 種商品，點選任一品項可在右側補貨、出庫或盤點。</p></div>
           <button className="outline mini" onClick={() => { setQuery(""); setCategoryFilter("all"); setFilter("all"); }}>清除篩選</button>
+        </div>
+        <div className="warehouse-quick-tabs">
+          <button className={filter === "all" ? "active" : ""} onClick={() => setFilter("all")}><PackageCheck /> 全部 {products.length}</button>
+          <button className={filter === "low" ? "active" : ""} onClick={() => setFilter("low")}><Clock3 /> 低庫存 {lowStock.length}</button>
+          <button className={filter === "out" ? "active" : ""} onClick={() => setFilter("out")}><Truck /> 缺貨 {outStock.length}</button>
+          <button className={filter === "changedToday" ? "active" : ""} onClick={() => setFilter("changedToday")}><History /> 今日異動 {todayMovements.length}</button>
         </div>
         <div className="warehouse-toolbar">
           <div className="woo-search"><Search size={16} /><input placeholder="搜尋品號、品名、分類、條碼、供應商、儲位..." value={query} onChange={e => setQuery(e.target.value)} /></div>
@@ -1608,21 +1735,6 @@ function WarehouseStockManager({ api, focus = {} }) {
         </> : <div className="document-empty compact">請先選擇商品</div>}
       </aside>
     </div>
-    <section className="warehouse-bottom-grid">
-      <div>
-        <div className="panel-title"><h3>最近總倉異動</h3><span>{movements.length} 筆</span></div>
-        <div className="warehouse-movement-list">
-          {movements.slice(0, 12).map(row => <div key={row.id} className="warehouse-movement-row"><span><strong>{row.item_no || row.product_id || "-"}</strong><small>{row.product_name || "未對應商品主檔"}</small></span><b className={Number(row.quantity) < 0 ? "danger" : "ok"}>{Number(row.quantity) > 0 ? "+" : ""}{row.quantity}</b><span>{row.movement_type}</span><small>{new Date(row.created_at).toLocaleString("zh-TW")}<br />{row.operator_email || "-"}</small></div>)}
-        </div>
-      </div>
-      <div>
-        <div className="panel-title"><h3>盤點紀錄</h3><span>{stockCounts.length} 筆</span></div>
-        <div className="warehouse-movement-list">
-          {stockCounts.slice(0, 8).map(row => <div key={row.id} className="warehouse-movement-row"><span><strong>{row.count_no}</strong><small>{row.warehouse_name}</small></span><b>{row.item_count}</b><span>差異 {row.total_difference}</span><small>{new Date(row.created_at).toLocaleString("zh-TW")}<br />{row.operator_email || "-"}</small></div>)}
-          {!stockCounts.length && <div className="document-empty compact">尚無盤點紀錄</div>}
-        </div>
-      </div>
-    </section>
   </div>;
 }
 
@@ -2153,9 +2265,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
         <button className={tab === "sales" ? "active" : ""} onClick={() => goTab("sales")}><FileText /> 銷貨單</button>
         <button className={tab === "import" ? "active" : ""} onClick={() => goTab("import")}><Upload /> Excel 正式銷貨單</button>
         <span>商品與庫存</span>
-        <button className={tab === "masterProducts" ? "active" : ""} onClick={() => goTab("masterProducts")}><Database /> 商品資料庫</button>
-        <button className={tab === "warehouseStock" ? "active" : ""} onClick={() => goTab("warehouseStock")}><Warehouse /> 總倉庫存</button>
-        <button className={tab === "products" ? "active" : ""} onClick={() => goTab("products")}><ShoppingBag /> 官網商品同步</button>
+        <button className={tab === "warehouseStock" ? "active" : ""} onClick={() => goTab("warehouseStock")}><Warehouse /> 總倉庫存管理</button>
         <button className={tab === "inventory" ? "active" : ""} onClick={() => goTab("inventory")}><Warehouse /> 寄售庫存</button>
         <button className={tab === "adjust" ? "active" : ""} onClick={() => goTab("adjust")}><SlidersHorizontal /> 盤點修正</button>
         <button className={tab === "history" ? "active" : ""} onClick={() => goTab("history")}><History /> 異動紀錄</button>
@@ -2181,7 +2291,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
