@@ -301,14 +301,14 @@ function openPrintableDocument({ type, title, number, date, company, sourceWareh
       <p><b>地　　址：</b>${escapeHtml(companyInfo.address)}</p>
     </div>
     <div class="title-block"><h1>${escapeHtml(companyInfo.name)}</h1><h2>${escapeHtml(title)}</h2></div>
-    <div class="brand-word">手米屋</div>
+    <div></div>
   </div>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(number)}</title><style>
     *{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",Arial,sans-serif;margin:24px;color:#111}
     .doc-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #173b35;padding-bottom:12px;margin-bottom:14px;color:#173b35}
     h1{font-family:serif;font-size:30px;margin:0}.company{font-weight:800}.doc-no{font-size:13px;color:#666;text-align:right}
     .letterhead{display:grid;grid-template-columns:1fr 1.4fr 1fr;align-items:start;gap:16px;border-bottom:2px solid #111;padding-bottom:6px}
-    .company-lines p,.customer-box p{margin:3px 0;line-height:1.35}.title-block{text-align:center}.title-block h1{font-size:32px;font-family:serif;margin:0}.title-block h2{font-size:26px;margin:8px 0 0;text-decoration:underline}.brand-word{text-align:right;font-family:serif;font-size:30px;font-weight:800;color:#5d0c24}
+    .company-lines p,.customer-box p{margin:3px 0;line-height:1.35}.title-block{text-align:center}.title-block h1{font-size:32px;font-family:serif;margin:0}.title-block h2{font-size:26px;margin:8px 0 0;text-decoration:underline}
     .customer-box{display:grid;grid-template-columns:1.45fr .95fr .9fr;border:2px solid #111;border-top:0;padding:7px 9px 6px;gap:12px}
     .customer-box b{font-weight:800}.customer-right p{white-space:nowrap}
     .meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}.meta>div{border:1px solid #d9d6cd;padding:10px;min-height:58px}
