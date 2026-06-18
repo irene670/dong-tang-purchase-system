@@ -247,6 +247,17 @@ function productIdentity(item, productMap = {}) {
 }
 
 function openPrintableDocument({ type, title, number, date, company, sourceWarehouse, storeName, destination, note, items, totals }) {
+  const companyInfo = {
+    name: "東瑭國際有限公司",
+    phone: "07-6320338",
+    fax: "07-6317308",
+    address: "822 高雄市阿蓮區港後 122-1 號",
+    bank: "中國信託銀行（822）",
+    branch: "岡山分行（1274）",
+    account: "274540352219",
+    accountName: "東瑭國際有限公司"
+  };
+  const shippingAddress = [destination?.postalCode, destination?.address].filter(Boolean).join(" ");
   const rows = items.map(item => {
     const amount = item.amount ?? (Number(item.qty || 0) * Number(item.price || 0));
     return `<tr>
@@ -264,29 +275,58 @@ function openPrintableDocument({ type, title, number, date, company, sourceWareh
     <div><span>門市</span><strong>${escapeHtml(storeName || destination?.storeName || company || "")}</strong></div>
     <div><span>調撥目的地</span><strong>${escapeHtml(destination?.companyName || company || "")}</strong><p>${escapeHtml([destination?.postalCode, destination?.address].filter(Boolean).join(" "))}</p></div>
   </div>`;
-  const regularHead = `<div class="meta">
-    <div><span>客戶名稱</span><strong>${escapeHtml(company || "")}</strong></div>
-    <div><span>單據日期</span><strong>${escapeHtml(date || "")}</strong></div>
-    <div><span>單據編號</span><strong>${escapeHtml(number || "")}</strong></div>
+  const regularHead = `<div class="customer-box">
+    <div class="customer-left">
+      <p><b>客戶名稱：</b>${escapeHtml(company || destination?.companyName || "")}</p>
+      <p><b>統一編號：</b>${escapeHtml(destination?.taxId || "")}</p>
+      <p><b>聯 絡 人：</b>${escapeHtml([destination?.recipientName, destination?.recipientPhone].filter(Boolean).join(" / "))}</p>
+      <p><b>送貨地址：</b>${escapeHtml(shippingAddress || destination?.storeName || "")}</p>
+      ${destination?.deliveryNote ? `<p><b>配送備註：</b>${escapeHtml(destination.deliveryNote)}</p>` : ""}
+    </div>
+    <div class="customer-mid">
+      <p><b>電話：</b>${escapeHtml(destination?.recipientPhone || "")}</p>
+      <p><b>Email：</b>${escapeHtml(destination?.recipientEmail || "")}</p>
+      <p><b>收貨門市：</b>${escapeHtml(destination?.storeName || "")}</p>
+    </div>
+    <div class="customer-right">
+      <p><b>${escapeHtml(title)}日期：</b>${escapeHtml(date || "")}</p>
+      <p><b>${escapeHtml(title)}單號：</b>${escapeHtml(number || "")}</p>
+      <p><b>頁次：</b>1/1</p>
+    </div>
+  </div>`;
+  const companyHead = `<div class="letterhead">
+    <div class="company-lines">
+      <p><b>電　　話：</b>${escapeHtml(companyInfo.phone)}</p>
+      <p><b>傳　　真：</b>${escapeHtml(companyInfo.fax)}</p>
+      <p><b>地　　址：</b>${escapeHtml(companyInfo.address)}</p>
+    </div>
+    <div class="title-block"><h1>${escapeHtml(companyInfo.name)}</h1><h2>${escapeHtml(title)}</h2></div>
+    <div class="brand-word">手米屋</div>
   </div>`;
   const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(number)}</title><style>
-    *{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",Arial,sans-serif;margin:28px;color:#173b35}
-    .doc-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #173b35;padding-bottom:12px;margin-bottom:14px}
+    *{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",Arial,sans-serif;margin:24px;color:#111}
+    .doc-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #173b35;padding-bottom:12px;margin-bottom:14px;color:#173b35}
     h1{font-family:serif;font-size:30px;margin:0}.company{font-weight:800}.doc-no{font-size:13px;color:#666;text-align:right}
+    .letterhead{display:grid;grid-template-columns:1fr 1.4fr 1fr;align-items:start;gap:16px;border-bottom:2px solid #111;padding-bottom:6px}
+    .company-lines p,.customer-box p{margin:3px 0;line-height:1.35}.title-block{text-align:center}.title-block h1{font-size:32px;font-family:serif;margin:0}.title-block h2{font-size:26px;margin:8px 0 0;text-decoration:underline}.brand-word{text-align:right;font-family:serif;font-size:30px;font-weight:800;color:#5d0c24}
+    .customer-box{display:grid;grid-template-columns:1.45fr .95fr .9fr;border:2px solid #111;border-top:0;padding:7px 9px 6px;gap:12px}
+    .customer-box b{font-weight:800}.customer-right p{white-space:nowrap}
     .meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}.meta>div{border:1px solid #d9d6cd;padding:10px;min-height:58px}
     .meta span{display:block;color:#777;font-size:11px;margin-bottom:4px}.meta strong{font-size:16px}.meta p{margin:4px 0 0;color:#555;font-size:12px}.meta-transfer{grid-template-columns:1fr 1fr 1.4fr}
-    table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#efeee8;color:#56635f;text-align:left;font-size:11px;padding:8px;border:1px solid #d9d6cd}
-    td{font-size:12px;padding:8px;border:1px solid #d9d6cd;vertical-align:middle}td.num{text-align:right;font-weight:800}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800}
+    table{width:100%;border-collapse:collapse;margin-top:${type === "transfer" ? "12px" : "0"}}th{background:#efeee8;color:#111;text-align:left;font-size:11px;padding:8px;border:1px solid #111}
+    td{font-size:12px;padding:8px;border:1px solid #111;vertical-align:middle}td.num{text-align:right;font-weight:800}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800}
     .barcode-cell{width:155px}.barcode{display:block;width:135px;height:34px;fill:#111}.barcode-cell small{display:block;font-size:9px;color:#333;margin-top:2px;letter-spacing:.08em}
     .totals{display:flex;justify-content:flex-end;gap:18px;margin-top:16px;font-weight:800}.totals strong{font-size:22px;font-family:serif}.note{margin-top:14px;font-size:12px;color:#555;white-space:pre-wrap}
-    .sign{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:42px}.sign div{border-top:1px solid #333;padding-top:8px;text-align:center;color:#555}
+    .regular-total{display:grid;grid-template-columns:1fr 280px;border:1px solid #111;border-top:0}.regular-note{min-height:84px;padding:10px;border-right:1px solid #111}.regular-total-grid{display:grid;grid-template-columns:1fr 1fr}.regular-total-grid span,.regular-total-grid strong{padding:7px 9px;border-bottom:1px solid #111}.regular-total-grid span{text-align:right}.regular-total-grid strong{text-align:right}.bank-info{border:1px solid #111;border-top:0;padding:10px;font-size:14px}.bank-info p{margin:4px 0}
+    .sign{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:34px}.sign div{border-top:1px solid #333;padding-top:8px;text-align:center;color:#555}
     @media print{body{margin:12mm}.no-print{display:none}}
   </style></head><body>
-    <div class="doc-head"><div><div class="company">東瑭國際有限公司</div><h1>${escapeHtml(title)}</h1></div><div class="doc-no">單號：${escapeHtml(number || "")}<br/>日期：${escapeHtml(date || "")}</div></div>
+    ${type === "transfer" ? `<div class="doc-head"><div><div class="company">${escapeHtml(companyInfo.name)}</div><h1>${escapeHtml(title)}</h1></div><div class="doc-no">單號：${escapeHtml(number || "")}<br/>日期：${escapeHtml(date || "")}</div></div>` : companyHead}
     ${type === "transfer" ? transferHead : regularHead}
     <table><thead><tr><th>品號</th><th>條碼</th><th>品名</th><th>單位</th><th>數量</th>${type === "transfer" ? "<th>門市</th><th>調撥目的地</th>" : "<th>單價</th><th>金額</th>"}<th>備註</th></tr></thead><tbody>${rows}</tbody></table>
-    ${totals ? `<div class="totals"><span>未稅 ${money(totals.preTax || 0)}</span><span>稅額 ${money(totals.tax || 0)}</span><strong>總計 ${money(totals.total || 0)}</strong></div>` : ""}
-    ${note ? `<div class="note">備註：${escapeHtml(note)}</div>` : ""}
+    ${type === "transfer" ? (totals ? `<div class="totals"><span>未稅 ${money(totals.preTax || 0)}</span><span>稅額 ${money(totals.tax || 0)}</span><strong>總計 ${money(totals.total || 0)}</strong></div>` : "") : `<div class="regular-total"><div class="regular-note">備註：${escapeHtml(note || "")}</div><div class="regular-total-grid"><span>合計金額</span><strong>${money(totals?.preTax || 0)}</strong><span>稅　額</span><strong>${money(totals?.tax || 0)}</strong><span>總金額</span><strong>${money(totals?.total || 0)}</strong></div></div>`}
+    ${type !== "transfer" ? `<div class="bank-info"><p>煩請到貨後盡快驗收確認，謝謝</p><p><b>銀行：</b>${escapeHtml(companyInfo.bank)} ｜ <b>分行：</b>${escapeHtml(companyInfo.branch)} ｜ <b>帳號：</b>${escapeHtml(companyInfo.account)} ｜ <b>戶名：</b>${escapeHtml(companyInfo.accountName)}</p></div>` : ""}
+    ${type === "transfer" && note ? `<div class="note">備註：${escapeHtml(note)}</div>` : ""}
     <div class="sign"><div>製表</div><div>檢貨</div><div>主管</div><div>簽收</div></div>
     <script>window.onload=function(){window.print()}</script>
   </body></html>`;
