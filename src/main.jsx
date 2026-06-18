@@ -211,6 +211,8 @@ function App() {
   const [movements, setMovements] = useState(() => JSON.parse(localStorage.getItem("dt-movements") || "null") || defaultMovements);
   const [sales, setSales] = useState(() => JSON.parse(localStorage.getItem("dt-sales") || "null") || defaultSales);
   const [orders, setOrders] = useState([]);
+  const [transfers, setTransfers] = useState([]);
+  const [warehouseMovements, setWarehouseMovements] = useState([]);
   const [dealerRecords, setDealerRecords] = useState([]);
   const [currentDealerId, setCurrentDealerId] = useState("");
   const [stores, setStores] = useState([]);
@@ -328,6 +330,43 @@ function App() {
     setSelectedStoreId(ownStores.find(store => store.is_default)?.id || ownStores[0]?.id || "");
     setMovements(nextMovements);
     setSales(nextSales);
+    setTransfers((data.transfers || []).map(row => ({
+      uuid: row.id,
+      id: row.transfer_no,
+      orderNo: row.order_no,
+      orderId: row.order_id,
+      company: row.company_name || dealer.company_name,
+      mode: row.mode,
+      dealerId: row.dealer_id,
+      status: row.status,
+      warehouse: row.source_warehouse,
+      destination: row.destination_snapshot || {},
+      note: row.note,
+      operator: row.operator_email,
+      date: new Date(row.created_at).toLocaleDateString("zh-TW"),
+      transferredAt: row.transferred_at,
+      items: (row.items || []).map(item => ({
+        id: item.id,
+        orderItemId: item.order_item_id,
+        productId: Number(item.product_id),
+        sku: item.sku,
+        name: item.product_name,
+        qty: Number(item.quantity),
+        note: item.note
+      }))
+    })));
+    setWarehouseMovements((data.warehouseMovements || []).map(row => ({
+      id: row.id,
+      date: new Date(row.created_at).toLocaleDateString("zh-TW"),
+      warehouse: row.warehouse_name,
+      company: row.company_name || "",
+      productId: Number(row.product_id),
+      type: row.movement_type,
+      qty: Number(row.quantity),
+      source: row.source_id,
+      operator: row.operator_email,
+      note: row.note
+    })));
     setOrders(data.orders.map(row => ({
       uuid: row.id,
       id: row.order_no,
@@ -546,6 +585,26 @@ function App() {
     return result.order;
   }
 
+  async function createTransferFromOrder(orderId) {
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "createTransferFromOrder", orderId })
+    });
+    await loadAccount({ preserveView: true });
+    notify(result.existed ? `採購單已有調撥單 ${result.transfer.transfer_no}` : `已建立調撥單 ${result.transfer.transfer_no}`);
+    return result.transfer;
+  }
+
+  async function updateTransfer(transferId, patch) {
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "updateTransfer", transferId, ...patch })
+    });
+    await loadAccount({ preserveView: true });
+    notify(`調撥單 ${result.transfer.transfer_no} 已更新`);
+    return result.transfer;
+  }
+
   if (authLoading) return <div className="loading-screen"><RefreshCw /> 正在確認登入狀態...</div>;
   if (authCallback) return <SetPassword mode={authCallback.type} onSubmit={completePassword} />;
   if (!user) return <Login onLogin={login} />;
@@ -628,8 +687,10 @@ function App() {
       ) : view === "orders" ? <DocumentCenter company={user.company} orders={orders} sales={sales.filter(s => s.company === user.company)} products={managedProducts} movements={movements.filter(m => m.company === user.company)} settings={channelSettings} />
         : view === "profile" ? <DealerProfileManager admin={admin} currentCompany={user.company} dealers={dealerRecords} stores={stores} onSaveProfile={saveProfile} onSaveStore={saveStore} />
         : <AdminPanel api={api} content={content} products={products} productEdits={productEdits} channels={channels}
-          dealers={dealerRecords} orders={orders} movements={movements} sales={sales} onSave={saveAdmin}
-          onSaveInventory={saveInventory} onCreateDealerAccount={createDealerAccount} onUpdateOrder={updateOrder} />}
+          dealers={dealerRecords} orders={orders} transfers={transfers} warehouseMovements={warehouseMovements}
+          movements={movements} sales={sales} onSave={saveAdmin}
+          onSaveInventory={saveInventory} onCreateDealerAccount={createDealerAccount}
+          onUpdateOrder={updateOrder} onCreateTransfer={createTransferFromOrder} onUpdateTransfer={updateTransfer} />}
 
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
     </div>
@@ -1494,7 +1555,7 @@ function WooCommerceSettings({ api }) {
   );
 }
 
-function AdminPanel({ api, content, products, productEdits, channels, dealers, orders, movements, sales, onSave, onSaveInventory, onCreateDealerAccount, onUpdateOrder }) {
+function AdminPanel({ api, content, products, productEdits, channels, dealers, orders, transfers, warehouseMovements, movements, sales, onSave, onSaveInventory, onCreateDealerAccount, onUpdateOrder, onCreateTransfer, onUpdateTransfer }) {
   const [tab, setTab] = useState("home");
   const [draft, setDraft] = useState(content);
   const [edits, setEdits] = useState(productEdits);
@@ -1508,7 +1569,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
     <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">帳號、內容、訂單與正式營運資料由目前的 GCP 伺服器與 PostgreSQL 資料庫集中管理。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button><button className={tab === "masterProducts" ? "active" : ""} onClick={() => setTab("masterProducts")}><Database /> 商品資料庫</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 官網商品同步</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
+      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button><button className={tab === "transfers" ? "active" : ""} onClick={() => setTab("transfers")}><Truck /> 調撥／倉儲</button><button className={tab === "masterProducts" ? "active" : ""} onClick={() => setTab("masterProducts")}><Database /> 商品資料庫</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 官網商品同步</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
       <section className="admin-content">
         {tab === "api" ? <WooCommerceSettings api={api} /> : tab === "home" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
@@ -1525,18 +1586,20 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} onUpdate={onUpdateOrder} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
 }
 
-function OrderManager({ orders, dealers, onUpdate }) {
+function OrderManager({ orders, dealers, transfers = [], onUpdate, onCreateTransfer }) {
   const [status, setStatus] = useState("待處理");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(orders[0]?.id || "");
   const [draft, setDraft] = useState({ trackingNo: "", note: "" });
   const [itemDraft, setItemDraft] = useState({});
+  const [forceEdit, setForceEdit] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
   const [saving, setSaving] = useState(false);
   const pendingStatuses = ["訂單成立", "已確認", "備貨中"];
   const visibleOrders = orders.filter(order => {
@@ -1546,6 +1609,7 @@ function OrderManager({ orders, dealers, onUpdate }) {
   });
   const selected = orders.find(order => order.id === selectedId) || visibleOrders[0] || orders[0];
   const selectedDealer = dealers.find(row => row.company_name === selected?.company);
+  const selectedTransfer = transfers.find(transfer => transfer.orderNo === selected?.id);
   const summary = {
     pending: orders.filter(order => pendingStatuses.includes(order.status)).length,
     shipped: orders.filter(order => ["已出貨", "已完成"].includes(order.status)).length,
@@ -1568,8 +1632,18 @@ function OrderManager({ orders, dealers, onUpdate }) {
         status: statusValue,
         trackingNo: draft.trackingNo,
         note: draft.note,
-        ...(!quantityLocked ? { itemQuantities: itemDraft } : {})
+        ...(!quantityLocked || forceEdit ? { itemQuantities: itemDraft, forceQuantityEdit: forceEdit, overrideReason } : {})
       });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function convertToTransfer() {
+    if (!selected || saving) return;
+    setSaving(true);
+    try {
+      await onCreateTransfer(selected.uuid || selected.id);
     } finally {
       setSaving(false);
     }
@@ -1580,6 +1654,7 @@ function OrderManager({ orders, dealers, onUpdate }) {
     return index >= 0 && index < orderStatusFlow.length - 1 ? orderStatusFlow[index + 1] : current;
   }
   const quantityLocked = selected && ["已出貨", "已完成"].includes(selected.status);
+  const canEditQuantity = !quantityLocked || forceEdit;
 
   return <div className="order-admin">
     <div className="order-admin-summary">
@@ -1623,12 +1698,16 @@ function OrderManager({ orders, dealers, onUpdate }) {
             <h3>經銷設定</h3>
             <p><strong>{selectedDealer?.mode === "consignment" ? "寄售" : "買斷"}</strong><span>{discountLabel(selectedDealer?.discount_percent || selected.pricing?.discount || 100)}</span><small>{pricingDescription(selected.pricing || selectedDealer || {})}</small></p>
           </section>
+          <section>
+            <h3>調撥狀態</h3>
+            <p>{selectedTransfer ? <><strong>{selectedTransfer.id}</strong><span>{selectedTransfer.status}</span><small>{selectedTransfer.warehouse} → {selectedTransfer.destination?.storeName || selected.shipping?.storeName || selected.company}</small></> : <><strong>尚未建立調撥單</strong><span>寄售流程需先轉成調撥單，再進行倉庫出庫與客戶倉入庫。</span></>}</p>
+          </section>
         </div>
         <div className="order-line-table table-scroll">
           <div className="order-line-head"><span>商品</span><span>SKU</span><span>數量</span><span>經銷單價</span><span>小計</span></div>
           {selected.lineItems.map(item => <div className="order-line-row" key={item.id || item.sku}>
             <span>{item.image && <img src={item.image} alt="" />}<strong>{item.name}</strong></span>
-            <span>{item.sku}</span><label className="order-qty-edit"><input type="number" min="1" disabled={quantityLocked || saving} value={itemDraft[item.id] ?? item.qty} onChange={e => setItemDraft({ ...itemDraft, [item.id]: Math.max(1, Number(e.target.value) || 1) })} /><small>原 {item.qty}</small></label><span>{money(item.dealerPrice)}</span><strong>{money(item.lineTotal)}</strong>
+            <span>{item.sku}</span><label className="order-qty-edit"><input type="number" min="1" disabled={!canEditQuantity || saving} value={itemDraft[item.id] ?? item.qty} onChange={e => setItemDraft({ ...itemDraft, [item.id]: Math.max(1, Number(e.target.value) || 1) })} /><small>原 {item.qty}</small></label><span>{money(item.dealerPrice)}</span><strong>{money(item.lineTotal)}</strong>
           </div>)}
         </div>
         <div className="order-admin-total">
@@ -1639,14 +1718,16 @@ function OrderManager({ orders, dealers, onUpdate }) {
         <div className="order-update-panel">
           <label><span>物流單號</span><input value={draft.trackingNo} onChange={e => setDraft({ ...draft, trackingNo: e.target.value })} placeholder="可空白，出貨後補登" /></label>
           <label><span>內部備註</span><textarea value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} placeholder="例如：急件、缺貨品項、業務交辦事項" /></label>
+          {quantityLocked && <div className="override-panel"><label><input type="checkbox" checked={forceEdit} onChange={e => setForceEdit(e.target.checked)} /> 最高權限強制修正已出貨／完成訂單數量</label>{forceEdit && <input value={overrideReason} onChange={e => setOverrideReason(e.target.value)} placeholder="請填寫修正原因，例如：出貨後發現數量登錄錯誤" />}</div>}
           <div className="order-actions">
             <select value={selected.status} onChange={e => update(e.target.value)} disabled={saving}>{orderStatusOptions.map(option => <option key={option}>{option}</option>)}</select>
-            <button className="outline" disabled={saving || quantityLocked} onClick={() => update()}><Save /> 儲存數量與金額</button>
+            <button className="outline" disabled={saving || !canEditQuantity} onClick={() => update()}><Save /> 儲存數量與金額</button>
             <button className="outline" disabled={saving} onClick={() => update()}><Save /> 儲存物流／備註</button>
+            <button className="outline" disabled={saving || Boolean(selectedTransfer) || selected.status === "已取消"} onClick={convertToTransfer}><Truck /> 轉成調撥單</button>
             {nextStatus(selected.status) !== selected.status && <button className="primary" disabled={saving} onClick={() => update(nextStatus(selected.status))}>{saving ? <RefreshCw className="spin-icon" /> : <ClipboardCheck />} 推進到「{nextStatus(selected.status)}」</button>}
           </div>
-          {quantityLocked && <small className="order-inventory-note warning">已出貨或已完成的訂單已可能影響寄售庫存，採購數量暫不開放修改。</small>}
-          {selectedDealer?.mode === "consignment" && <small className="order-inventory-note">寄售訂單標記為「已出貨」或「已完成」後，會自動加入該經銷商寄售庫存，且不會重複入庫。</small>}
+          {quantityLocked && <small className="order-inventory-note warning">已出貨或已完成的訂單修改需要最高權限與修正原因。若已建立調撥單，也請同步檢查調撥單與倉儲紀錄。</small>}
+          {selectedDealer?.mode === "consignment" && <small className="order-inventory-note">寄售流程建議：採購單確認 → 轉調撥單 → 調撥單已調撥時，才寫入東瑭主倉出庫與經銷商寄售入庫。</small>}
         </div>
       </article>}
     </div>
@@ -1735,6 +1816,98 @@ function ChannelManager({ channels, onChange }) {
 const stockOf = (movements, company, productId) => movements.filter(m => m.company === company && Number(m.productId) === Number(productId)).reduce((sum, m) => sum + Number(m.qty), 0);
 const today = () => new Date().toISOString().slice(0, 10).replaceAll("-", "/");
 const stockAlertKey = company => `dt-stock-alerts-${encodeURIComponent(company || "")}`;
+
+function TransferWarehouseManager({ transfers, warehouseMovements, products, onUpdateTransfer }) {
+  const [status, setStatus] = useState("全部");
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState(transfers[0]?.id || "");
+  const [note, setNote] = useState("");
+  const [saving, setSaving] = useState(false);
+  const productMap = Object.fromEntries(products.map(p => [p.id, p]));
+  const filtered = transfers.filter(transfer => {
+    const matchStatus = status === "全部" || transfer.status === status;
+    const haystack = `${transfer.id} ${transfer.orderNo || ""} ${transfer.company} ${transfer.destination?.storeName || ""}`.toLowerCase();
+    return matchStatus && haystack.includes(query.toLowerCase());
+  });
+  const selected = transfers.find(transfer => transfer.id === selectedId) || filtered[0] || transfers[0];
+
+  useEffect(() => {
+    if (selected) setNote(selected.note || "");
+  }, [selected?.id]);
+
+  async function update(statusValue) {
+    if (!selected || saving) return;
+    setSaving(true);
+    try {
+      await onUpdateTransfer(selected.uuid || selected.id, { status: statusValue, note });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const warehouseSummary = warehouseMovements.reduce((acc, row) => {
+    acc.total += Number(row.qty || 0);
+    if (row.qty < 0) acc.out += Math.abs(Number(row.qty));
+    if (row.qty > 0) acc.in += Number(row.qty);
+    return acc;
+  }, { out: 0, in: 0, total: 0 });
+
+  return <div className="transfer-admin">
+    <div className="transfer-flow">
+      <div><b>1</b><span>採購單確認</span></div>
+      <div><b>2</b><span>轉調撥單</span></div>
+      <div><b>3</b><span>東瑭主倉出庫</span></div>
+      <div><b>4</b><span>客戶寄售庫存入庫</span></div>
+    </div>
+    <div className="order-admin-summary">
+      <div><span>調撥單數</span><strong>{transfers.length}</strong></div>
+      <div><span>主倉出庫件數</span><strong>{warehouseSummary.out}</strong></div>
+      <div><span>作廢回補件數</span><strong>{warehouseSummary.in}</strong></div>
+    </div>
+    <div className="order-admin-tools">
+      <div className="search"><Search /><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋調撥單、採購單、經銷商、門市" /></div>
+      <select value={status} onChange={e => setStatus(e.target.value)}><option>全部</option><option>草稿</option><option>已確認</option><option>已調撥</option><option>已作廢</option></select>
+    </div>
+    <div className="order-admin-layout">
+      <div className="order-admin-list">
+        {filtered.length === 0 ? <div className="document-empty">目前沒有符合條件的調撥單</div> : filtered.map(transfer => <button key={transfer.id} className={selected?.id === transfer.id ? "active" : ""} onClick={() => setSelectedId(transfer.id)}>
+          <span><strong>{transfer.id}</strong><small>{transfer.date} · {transfer.company}</small></span>
+          <b className={`order-status ${transfer.status === "已作廢" ? "cancelled" : ""}`}>{transfer.status}</b>
+          <em>{transfer.items.reduce((sum, item) => sum + item.qty, 0)} 件</em>
+        </button>)}
+      </div>
+      {selected && <article className="order-admin-detail">
+        <div className="order-detail-head">
+          <div><span className="eyebrow">TRANSFER DOCUMENT</span><h2>{selected.id}</h2><p>來源採購單 {selected.orderNo || "-"} · {selected.company}</p></div>
+          <span className={`order-status ${selected.status === "已作廢" ? "cancelled" : ""}`}>{selected.status}</span>
+        </div>
+        <div className="order-detail-grid">
+          <section><h3>調撥目的地</h3><p><strong>{selected.destination?.storeName || "客戶倉庫"}</strong><span>{selected.destination?.companyName}</span><span>{selected.destination?.postalCode} {selected.destination?.address}</span><small>收件：{selected.destination?.recipientName || "-"}／{selected.destination?.recipientPhone || "-"}</small></p></section>
+          <section><h3>倉儲資訊</h3><p><strong>{selected.warehouse}</strong><span>調撥到：{selected.company}</span><small>操作：{selected.operator || "-"}</small></p></section>
+        </div>
+        <div className="order-line-table table-scroll">
+          <div className="order-line-head"><span>商品</span><span>SKU</span><span>數量</span><span>目前主檔</span><span>備註</span></div>
+          {selected.items.map(item => <div className="order-line-row" key={item.id}>
+            <span><strong>{item.name}</strong></span><span>{item.sku}</span><strong>{item.qty}</strong><span>{productMap[item.productId]?.category || "-"}</span><span>{item.note || "-"}</span>
+          </div>)}
+        </div>
+        <div className="order-update-panel">
+          <label><span>調撥備註</span><textarea value={note} onChange={e => setNote(e.target.value)} placeholder="例如：分批調撥、缺貨待補、倉管備註" /></label>
+          <div className="transfer-actions">
+            <button className="outline" disabled={saving || selected.status === "已確認" || selected.status === "已調撥" || selected.status === "已作廢"} onClick={() => update("已確認")}><ClipboardCheck /> 確認調撥單</button>
+            <button className="primary" disabled={saving || selected.status === "已調撥" || selected.status === "已作廢"} onClick={() => update("已調撥")}><Truck /> 已調撥出庫</button>
+            <button className="outline danger" disabled={saving || selected.status === "已作廢"} onClick={() => update("已作廢")}><Trash2 /> 作廢調撥單</button>
+          </div>
+          <small className="order-inventory-note">按下「已調撥出庫」後，系統會同時建立東瑭主倉出庫紀錄，以及經銷商寄售庫存入庫紀錄，且具備防重複入庫機制。</small>
+        </div>
+      </article>}
+    </div>
+    <div className="warehouse-history">
+      <h2>倉儲異動紀錄</h2>
+      <div className="movement-list table-scroll"><div className="movement-head"><span>日期</span><span>倉庫</span><span>經銷商</span><span>商品</span><span>異動</span><span>數量</span><span>來源</span><span>操作者／備註</span></div>{warehouseMovements.map(row => <div className="movement-row" key={row.id}><span>{row.date}</span><span>{row.warehouse}</span><span>{row.company || "-"}</span><span>{productMap[row.productId]?.name || row.productId}</span><span>{row.type}</span><b className={row.qty < 0 ? "negative" : "positive"}>{row.qty > 0 ? "+" : ""}{row.qty}</b><span>{row.source}</span><span>{row.operator}<small>{row.note}</small></span></div>)}</div>
+    </div>
+  </div>;
+}
 
 function InventoryOverview({ channels, products, movements }) {
   const consignments = Object.entries(channels).filter(([, value]) => value.mode === "consignment");

@@ -54,8 +54,13 @@ function isAdmin(user) {
   return user.roles.includes("admin");
 }
 
+function canOverrideLockedOrders(user) {
+  return user.roles.includes("super_admin") || user.roles.includes("admin");
+}
+
 const orderStatuses = ["訂單成立", "已確認", "備貨中", "已出貨", "已完成", "已取消"];
 const inventoryOrderStatuses = ["已出貨", "已完成"];
+const transferStatuses = ["草稿", "已確認", "已調撥", "已作廢"];
 
 async function bootstrap(user) {
   const dealer = await dealerFor(user);
@@ -78,6 +83,13 @@ async function bootstrap(user) {
   const stores = isAdmin(user)
     ? await db.sql`SELECT * FROM dealer_stores ORDER BY dealer_id, is_default DESC, store_name`
     : await db.sql`SELECT * FROM dealer_stores WHERE dealer_id=${dealer.id} ORDER BY is_default DESC, store_name`;
+  const transfers = isAdmin(user)
+    ? await db.sql`SELECT t.*, d.company_name, d.mode, o.order_no FROM transfer_documents t JOIN dealers d ON d.id=t.dealer_id LEFT JOIN orders o ON o.id=t.order_id ORDER BY t.created_at DESC`
+    : await db.sql`SELECT t.*, o.order_no FROM transfer_documents t LEFT JOIN orders o ON o.id=t.order_id WHERE t.dealer_id=${dealer.id} ORDER BY t.created_at DESC`;
+  const transferItems = await db.sql`SELECT * FROM transfer_document_items ORDER BY id`;
+  const warehouseMovements = isAdmin(user)
+    ? await db.sql`SELECT w.*, d.company_name FROM warehouse_movements w LEFT JOIN dealers d ON d.id=w.dealer_id ORDER BY w.created_at DESC`
+    : [];
   return {
     user: { id: user.id, email: user.email, name: user.name, roles: user.roles },
     admin: isAdmin(user),
@@ -87,6 +99,8 @@ async function bootstrap(user) {
     dealers,
     stores,
     orders: orders.map(o => ({ ...o, items: orderItems.filter(i => i.order_id === o.id) })),
+    transfers: transfers.map(t => ({ ...t, items: transferItems.filter(i => i.transfer_document_id === t.id) })),
+    warehouseMovements,
     sales: sales.map(s => ({ ...s, items: salesItems.filter(i => i.sales_document_id === s.id) })),
     movements
   };
@@ -298,6 +312,159 @@ async function reversePurchaseInventory(user, order, items) {
   }
 }
 
+async function transferWithItems(transferId) {
+  const rows = await db.sql`
+    SELECT t.*, d.company_name, d.mode, o.order_no
+    FROM transfer_documents t
+    JOIN dealers d ON d.id=t.dealer_id
+    LEFT JOIN orders o ON o.id=t.order_id
+    WHERE t.id=${transferId}`;
+  if (!rows.length) return null;
+  const items = await db.sql`SELECT * FROM transfer_document_items WHERE transfer_document_id=${transferId} ORDER BY id`;
+  return { ...rows[0], items };
+}
+
+async function createTransferFromOrder(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const orderId = body.orderId || body.id;
+  if (!orderId) return json({ error: "缺少採購單 ID" }, 400);
+
+  const orders = await db.sql`
+    SELECT o.*, d.company_name, d.mode
+    FROM orders o
+    JOIN dealers d ON d.id=o.dealer_id
+    WHERE o.id::text=${String(orderId)} OR o.order_no=${String(orderId)}`;
+  if (!orders.length) return json({ error: "找不到採購單" }, 404);
+  const order = orders[0];
+  if (order.status === "已取消") return json({ error: "已取消的採購單不可轉調撥單" }, 400);
+
+  const existing = await db.sql`
+    SELECT id FROM transfer_documents
+    WHERE order_id=${order.id} AND status <> '已作廢'
+    ORDER BY created_at DESC LIMIT 1`;
+  if (existing.length) {
+    return json({ ok: true, transfer: await transferWithItems(existing[0].id), existed: true });
+  }
+
+  const orderItems = await db.sql`SELECT * FROM order_items WHERE order_id=${order.id} ORDER BY id`;
+  if (!orderItems.length) return json({ error: "採購單沒有商品明細" }, 400);
+  const transferNo = `TR-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${String(Date.now()).slice(-5)}`;
+  const destination = order.shipping_snapshot || {};
+  const transfers = await db.sql`
+    INSERT INTO transfer_documents
+      (transfer_no, order_id, dealer_id, destination_snapshot, note, operator_email)
+    VALUES (${transferNo}, ${order.id}, ${order.dealer_id}, ${JSON.stringify(destination)}::jsonb,
+      ${String(body.note || "")}, ${user.email})
+    RETURNING *`;
+  const transfer = transfers[0];
+  for (const item of orderItems) {
+    await db.sql`
+      INSERT INTO transfer_document_items
+        (transfer_document_id, order_item_id, product_id, sku, product_name, quantity)
+      VALUES (${transfer.id}, ${item.id}, ${Number(item.product_id)}, ${item.sku},
+        ${item.product_name}, ${Number(item.quantity)})`;
+  }
+  await db.sql`
+    UPDATE orders SET status=CASE WHEN status='訂單成立' THEN '已確認' ELSE status END,
+      confirmed_at=CASE WHEN confirmed_at IS NULL THEN now() ELSE confirmed_at END,
+      updated_at=now()
+    WHERE id=${order.id}`;
+  return json({ ok: true, transfer: await transferWithItems(transfer.id), existed: false });
+}
+
+async function applyTransferInventory(user, transfer, items) {
+  if (transfer.inventory_applied_at) return;
+  for (const item of items) {
+    if (transfer.mode === "consignment") {
+      await db.sql`
+        INSERT INTO inventory_movements
+          (dealer_id, product_id, movement_type, quantity, source_type, source_id,
+            idempotency_key, operator_email, note)
+        VALUES (${transfer.dealer_id}, ${Number(item.product_id)}, '調撥入庫',
+          ${Number(item.quantity)}, 'transfer', ${transfer.transfer_no},
+          ${`transfer:${transfer.id}:${item.id}:dealer-in`}, ${user.email}, '調撥單確認調撥，自動加入經銷商寄售庫存')
+        ON CONFLICT (idempotency_key) DO NOTHING`;
+    }
+    await db.sql`
+      INSERT INTO warehouse_movements
+        (warehouse_name, dealer_id, product_id, movement_type, quantity, source_type, source_id,
+          idempotency_key, operator_email, note)
+      VALUES (${transfer.source_warehouse}, ${transfer.dealer_id}, ${Number(item.product_id)}, '調撥出庫',
+        ${-Number(item.quantity)}, 'transfer', ${transfer.transfer_no},
+        ${`transfer:${transfer.id}:${item.id}:warehouse-out`}, ${user.email}, '由採購單轉調撥單，出庫至經銷商倉庫')
+      ON CONFLICT (idempotency_key) DO NOTHING`;
+  }
+}
+
+async function reverseTransferInventory(user, transfer, items) {
+  if (!transfer.inventory_applied_at || transfer.inventory_reversed_at) return;
+  for (const item of items) {
+    if (transfer.mode === "consignment") {
+      await db.sql`
+        INSERT INTO inventory_movements
+          (dealer_id, product_id, movement_type, quantity, source_type, source_id,
+            idempotency_key, operator_email, note)
+        VALUES (${transfer.dealer_id}, ${Number(item.product_id)}, '調撥作廢回沖',
+          ${-Number(item.quantity)}, 'transfer', ${transfer.transfer_no},
+          ${`transfer:${transfer.id}:${item.id}:dealer-void`}, ${user.email}, '調撥單作廢，回沖經銷商寄售庫存')
+        ON CONFLICT (idempotency_key) DO NOTHING`;
+    }
+    await db.sql`
+      INSERT INTO warehouse_movements
+        (warehouse_name, dealer_id, product_id, movement_type, quantity, source_type, source_id,
+          idempotency_key, operator_email, note)
+      VALUES (${transfer.source_warehouse}, ${transfer.dealer_id}, ${Number(item.product_id)}, '調撥作廢回補',
+        ${Number(item.quantity)}, 'transfer', ${transfer.transfer_no},
+        ${`transfer:${transfer.id}:${item.id}:warehouse-void`}, ${user.email}, '調撥單作廢，回補東瑭倉庫紀錄')
+      ON CONFLICT (idempotency_key) DO NOTHING`;
+  }
+}
+
+async function updateTransfer(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const transferId = body.transferId || body.id;
+  const status = body.status;
+  if (!transferId) return json({ error: "缺少調撥單 ID" }, 400);
+  if (!transferStatuses.includes(status)) return json({ error: "調撥單狀態不正確" }, 400);
+
+  const rows = await db.sql`
+    SELECT t.*, d.company_name, d.mode, o.order_no
+    FROM transfer_documents t
+    JOIN dealers d ON d.id=t.dealer_id
+    LEFT JOIN orders o ON o.id=t.order_id
+    WHERE t.id::text=${String(transferId)} OR t.transfer_no=${String(transferId)}`;
+  if (!rows.length) return json({ error: "找不到調撥單" }, 404);
+  const transfer = rows[0];
+  const items = await db.sql`SELECT * FROM transfer_document_items WHERE transfer_document_id=${transfer.id} ORDER BY id`;
+  const note = String(body.note ?? transfer.note ?? "").trim();
+
+  if (status === "已調撥") {
+    await applyTransferInventory(user, transfer, items);
+  }
+  if (status === "已作廢") {
+    await reverseTransferInventory(user, transfer, items);
+  }
+
+  const updated = await db.sql`
+    UPDATE transfer_documents SET status=${status}, note=${note}, operator_email=${user.email},
+      confirmed_at=CASE WHEN ${status} IN ('已確認','已調撥') AND confirmed_at IS NULL THEN now() ELSE confirmed_at END,
+      transferred_at=CASE WHEN ${status}='已調撥' AND transferred_at IS NULL THEN now() ELSE transferred_at END,
+      voided_at=CASE WHEN ${status}='已作廢' AND voided_at IS NULL THEN now() ELSE voided_at END,
+      inventory_applied_at=CASE WHEN ${status}='已調撥' AND inventory_applied_at IS NULL THEN now() ELSE inventory_applied_at END,
+      inventory_reversed_at=CASE WHEN ${status}='已作廢' AND inventory_applied_at IS NOT NULL AND inventory_reversed_at IS NULL THEN now() ELSE inventory_reversed_at END,
+      updated_at=now()
+    WHERE id=${transfer.id}
+    RETURNING *`;
+  if (status === "已調撥" && transfer.order_id) {
+    await db.sql`
+      UPDATE orders SET status='已出貨',
+        shipped_at=CASE WHEN shipped_at IS NULL THEN now() ELSE shipped_at END,
+        updated_at=now()
+      WHERE id=${transfer.order_id}`;
+  }
+  return json({ ok: true, transfer: { ...updated[0], company_name: transfer.company_name, order_no: transfer.order_no, items } });
+}
+
 async function updateOrder(user, body) {
   if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
   const orderId = body.orderId || body.id;
@@ -315,8 +482,12 @@ async function updateOrder(user, body) {
   let items = await db.sql`SELECT * FROM order_items WHERE order_id=${order.id} ORDER BY id`;
 
   if (body.itemQuantities && typeof body.itemQuantities === "object") {
-    if (inventoryOrderStatuses.includes(order.status)) {
-      return json({ error: "此訂單已出貨或完成，為避免寄售庫存不一致，請先不要修改採購數量。" }, 400);
+    const lockedOrder = inventoryOrderStatuses.includes(order.status);
+    if (lockedOrder && (!body.forceQuantityEdit || !canOverrideLockedOrders(user))) {
+      return json({ error: "此訂單已出貨或完成。若確定要修正，請用最高權限勾選強制修正並填寫原因。" }, 400);
+    }
+    if (lockedOrder && !String(body.overrideReason || "").trim()) {
+      return json({ error: "強制修正已出貨訂單時，請填寫修正原因。" }, 400);
     }
     const quantityById = new Map(Object.entries(body.itemQuantities).map(([id, value]) => [String(id), Math.max(1, Math.floor(Number(value) || 1))]));
     const pricingItems = items.map(item => ({
@@ -345,7 +516,8 @@ async function updateOrder(user, body) {
   }
 
   const nextTracking = String(body.trackingNo ?? order.tracking_no ?? "").trim();
-  const nextNote = String(body.note ?? order.admin_note ?? "").trim();
+  const overrideReason = String(body.overrideReason || "").trim();
+  const nextNote = [String(body.note ?? order.admin_note ?? "").trim(), overrideReason ? `強制修正原因：${overrideReason}` : ""].filter(Boolean).join("\n");
   const now = new Date().toISOString();
   const rows = await db.sql`
     UPDATE orders SET status=${status},
@@ -360,7 +532,7 @@ async function updateOrder(user, body) {
     WHERE id=${order.id}
     RETURNING *`;
 
-  if (inventoryOrderStatuses.includes(status)) await applyPurchaseInventory(user, order, items);
+  if (body.applyLegacyInventory && inventoryOrderStatuses.includes(status)) await applyPurchaseInventory(user, order, items);
   if (status === "已取消") await reversePurchaseInventory(user, order, items);
 
   return json({ ok: true, order: { ...rows[0], company_name: order.company_name, items } });
@@ -733,6 +905,12 @@ export default async function handler(req) {
     if (req.method === "POST" && route === "products" && action === "sync") return syncWooCommerceProducts(user);
     if (req.method === "POST" && route === "products" && action === "update") return updateWooCommerceProduct(user, body);
     if (req.method === "POST" && route === "orders") return createOrder(user, body);
+    if (["createTransferFromOrder", "transfer-from-order"].includes(action) && req.method === "POST") {
+      return createTransferFromOrder(user, body);
+    }
+    if (["updateTransfer", "transfer"].includes(action) && ["POST", "PUT", "PATCH"].includes(req.method)) {
+      return updateTransfer(user, body);
+    }
     if (["updateOrder", "order"].includes(action) && ["POST", "PUT", "PATCH"].includes(req.method)) {
       return updateOrder(user, body);
     }
