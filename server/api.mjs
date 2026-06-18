@@ -232,6 +232,107 @@ async function showSyncedWooProducts(user) {
   return json({ ok: true, visibleCount: wooRows.length, linkedVisibleCount: linkedRows.length });
 }
 
+async function wooMasterDiff() {
+  const rows = await db.sql`
+    SELECT c.product_id, c.sku, c.name, c.payload,
+      pm.id AS master_id, pm.item_no, pm.name AS master_name, pm.stock_quantity, pm.safety_stock,
+      (pm.stock_quantity + COALESCE(SUM(wm.quantity), 0))::integer AS current_stock
+    FROM woocommerce_product_cache c
+    LEFT JOIN LATERAL (
+      SELECT *
+      FROM product_master pm
+      WHERE pm.woo_product_id=c.product_id
+        OR (NULLIF(pm.item_no, '') IS NOT NULL AND NULLIF(c.sku, '') IS NOT NULL AND pm.item_no=c.sku)
+        OR (NULLIF(pm.barcode, '') IS NOT NULL AND NULLIF(c.sku, '') IS NOT NULL AND pm.barcode=c.sku)
+        OR (NULLIF(pm.woo_sku, '') IS NOT NULL AND NULLIF(c.sku, '') IS NOT NULL AND pm.woo_sku=c.sku)
+      ORDER BY
+        CASE
+          WHEN pm.woo_product_id=c.product_id THEN 0
+          WHEN pm.item_no=c.sku THEN 1
+          WHEN pm.barcode=c.sku THEN 2
+          ELSE 3
+        END,
+        pm.updated_at DESC NULLS LAST
+      LIMIT 1
+    ) pm ON true
+    LEFT JOIN warehouse_movements wm
+      ON wm.product_master_id=pm.id
+      OR (pm.woo_product_id IS NOT NULL AND wm.product_id=pm.woo_product_id)
+    GROUP BY c.product_id, c.sku, c.name, c.payload, pm.id, pm.item_no, pm.name, pm.stock_quantity, pm.safety_stock
+    ORDER BY c.product_id`;
+  const missing = rows.filter(row => !row.master_id).map(row => ({
+    productId: Number(row.product_id),
+    sku: row.sku || row.payload?.sku || String(row.product_id),
+    name: row.name || stripHtml(String(row.payload?.name || "")),
+    price: Number(row.payload?.price || row.payload?.regular_price || 0) || 0,
+    wooStock: row.payload?.stock_quantity ?? null,
+    stockStatus: row.payload?.stock_status || "",
+    permalink: row.payload?.permalink || ""
+  }));
+  const stockMismatches = rows.filter(row => row.master_id && row.payload?.stock_quantity !== null && row.payload?.stock_quantity !== undefined
+    && Number(row.payload.stock_quantity) !== Number(row.current_stock || 0)).map(row => ({
+      productId: Number(row.product_id),
+      sku: row.sku || row.payload?.sku || String(row.product_id),
+      name: row.master_name || row.name || stripHtml(String(row.payload?.name || "")),
+      masterId: row.master_id,
+      warehouseStock: Number(row.current_stock || 0),
+      wooStock: Number(row.payload.stock_quantity || 0),
+      difference: Number(row.current_stock || 0) - Number(row.payload.stock_quantity || 0)
+    }));
+  return {
+    wooCount: rows.length,
+    matchedCount: rows.filter(row => row.master_id).length,
+    missing,
+    stockMismatches
+  };
+}
+
+async function createMasterProductsFromWoo(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const productIds = (Array.isArray(body.productIds) ? body.productIds : []).map(Number).filter(Number.isFinite);
+  if (!productIds.length) return json({ error: "請至少選擇一個官網商品" }, 400);
+  const rows = await db.sql`
+    SELECT product_id, sku, name, payload
+    FROM woocommerce_product_cache
+    WHERE product_id = ANY(${productIds}::bigint[])
+    ORDER BY product_id`;
+  let created = 0;
+  let skipped = 0;
+  for (const row of rows) {
+    const sku = String(row.sku || row.payload?.sku || row.product_id).trim();
+    const payload = row.payload || {};
+    const category = Array.isArray(payload.categories)
+      ? payload.categories.find(c => c.name !== "All")?.name?.replace(/[▾▸]/g, "").trim() || ""
+      : "";
+    const retailPrice = toNumber(payload.regular_price || payload.price || 0);
+    const salePrice = toNumber(payload.sale_price || 0);
+    const existing = await db.sql`
+      SELECT id FROM product_master
+      WHERE woo_product_id=${Number(row.product_id)}
+        OR item_no=${sku}
+        OR (NULLIF(barcode, '') IS NOT NULL AND barcode=${sku})
+        OR (NULLIF(woo_sku, '') IS NOT NULL AND woo_sku=${sku})
+      LIMIT 1`;
+    if (existing.length) {
+      skipped += 1;
+      continue;
+    }
+    await db.sql`
+      INSERT INTO product_master
+        (item_no, name, unit, category, retail_price, sale_price, stock_quantity, safety_stock,
+          barcode, supplier, description, woo_product_id, woo_sku, woo_permalink,
+          dealer_visible, active, source, storage_location, updated_at)
+      VALUES (${sku}, ${row.name || stripHtml(String(payload.name || ""))}, ${""}, ${category},
+        ${retailPrice}, ${salePrice}, 0, ${Math.max(0, Number(payload.low_stock_amount || 0) || 0)},
+        ${sku}, ${""}, ${stripHtml(String(payload.short_description || payload.description || ""))},
+        ${Number(row.product_id)}, ${sku}, ${payload.permalink || ""},
+        false, true, 'woocommerce', ${""}, now())`;
+    created += 1;
+  }
+  await syncMasterWooLinks();
+  return json({ ok: true, created, skipped, ...(await wooMasterDiff()) });
+}
+
 async function listMasterProducts(user) {
   if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
   const rows = await db.sql`SELECT * FROM product_master ORDER BY item_no`;
@@ -282,6 +383,11 @@ async function productMasterAction(user, body) {
     if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
     return json({ ok: true, ...(await syncMasterWooLinks()) });
   }
+  if (body.action === "compareWooMaster") {
+    if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+    return json({ ok: true, ...(await wooMasterDiff()) });
+  }
+  if (body.action === "createFromWoo") return createMasterProductsFromWoo(user, body);
   if (body.action === "showSyncedWooProducts") return showSyncedWooProducts(user);
   return saveMasterProducts(user, body);
 }
@@ -1179,7 +1285,7 @@ async function syncWooCommerceProducts(user) {
       const data = await fetchAllWooPages(fallbackUrl);
       await replaceWooProductCache(data);
       await saveWooSyncMeta(data.length);
-      return json({ ok: true, count: data.length, products: data });
+      return json({ ok: true, count: data.length, products: data, masterDiff: await wooMasterDiff() });
     } catch (e) {
       console.error("Fallback fetch failed", e);
       return json({ error: "官網商品同步失敗" }, 502);
@@ -1201,7 +1307,7 @@ async function syncWooCommerceProducts(user) {
     });
     await replaceWooProductCache(data);
     await saveWooSyncMeta(data.length);
-    return json({ ok: true, count: data.length, products: data });
+    return json({ ok: true, count: data.length, products: data, masterDiff: await wooMasterDiff() });
   } catch (error) {
     console.error("WooCommerce fetch error:", error);
     return json({ error: error.message || "Internal error fetching products" }, 500);

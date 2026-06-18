@@ -478,6 +478,25 @@
 .woo-sync-button svg{width:15px}
 .woo-sync-message{background:#edf2ef;color:#527067;border-left:3px solid var(--green);padding:10px 12px;margin-bottom:10px;font-size:12px}
 .woo-sync-message.syncing{background:#fff0e8;color:#a54a29;border-left-color:var(--orange)}
+.woo-master-diff{border:1px solid #edc0a8;background:#fff8f3;padding:16px;margin-bottom:14px;display:grid;gap:14px}
+.woo-master-diff-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.woo-master-diff h3{font-family:"Shippori Mincho";font-size:24px;margin:0 0 6px;color:var(--green)}
+.woo-master-diff p{margin:0;color:#7a716b;line-height:1.6}
+.woo-master-diff .primary{width:auto;margin:0;white-space:nowrap;padding:12px 16px}
+.woo-master-diff h4{margin:0 0 10px;color:#9d4428;display:flex;align-items:center;gap:8px}
+.woo-master-diff h4 span{font-size:11px;background:#fff;border:1px solid #ead2c6;padding:4px 7px;color:#9d4428}
+.woo-missing-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.woo-missing-item{display:grid;grid-template-columns:22px 1fr;gap:10px;align-items:flex-start;background:#fff;border:1px solid #ead6ca;padding:10px}
+.woo-missing-item input{width:18px;height:18px;margin-top:2px}
+.woo-missing-item strong{display:inline-block;color:var(--green);margin-right:8px}
+.woo-missing-item b{display:block;margin-top:3px}
+.woo-missing-item small{display:block;color:#85817b;margin-top:4px}
+.woo-stock-mismatch-list{display:grid;gap:8px}
+.woo-stock-mismatch-list div{display:grid;grid-template-columns:110px minmax(220px,1fr) 90px 90px;gap:10px;align-items:center;background:#fff;border:1px solid #ead6ca;padding:9px 10px}
+.woo-stock-mismatch-list strong{color:var(--green)}
+.woo-stock-mismatch-list span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.woo-stock-mismatch-list b{font-size:12px;color:#9d4428}
+.woo-diff-note{font-size:12px;margin-top:10px!important;color:#9d4428!important}
 .woo-pagination{display:flex;align-items:center;justify-content:space-between;gap:14px;background:#f7f6f1;border:1px solid var(--line);padding:10px 12px;margin-bottom:10px;font-size:12px;flex-wrap:wrap}
 .woo-pagination.compact{margin:10px 0 0}
 .woo-page-info{color:#68716d}

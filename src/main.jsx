@@ -1621,6 +1621,8 @@ function WooProductManager({ api }) {
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncMessage, setSyncMessage] = useState('');
+  const [masterDiff, setMasterDiff] = useState({ missing: [], stockMismatches: [], matchedCount: 0, wooCount: 0 });
+  const [selectedMissing, setSelectedMissing] = useState([]);
   const [search, setSearch] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [page, setPage] = useState(1);
@@ -1632,8 +1634,22 @@ function WooProductManager({ api }) {
       setProducts(data);
       setSyncMessage(data.length ? `目前使用已同步商品資料，共 ${data.length} 筆。` : '目前資料庫尚無已同步商品，請按「同步官網商品」。');
       setLoading(false);
+      loadMasterDiff();
     }).catch(e => { setError(e.message); setLoading(false); });
   }, [api]);
+
+  async function loadMasterDiff() {
+    try {
+      const diff = await api("master-products", {
+        method: "POST",
+        body: JSON.stringify({ action: "compareWooMaster" })
+      });
+      setMasterDiff(diff);
+      setSelectedMissing((diff.missing || []).map(item => item.productId));
+    } catch (err) {
+      console.warn("Woo master compare failed", err);
+    }
+  }
 
   function getEdit(id) { return editMap[id] || {}; }
   function setEdit(id, field, value) { setEditMap(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } })); }
@@ -1662,10 +1678,41 @@ function WooProductManager({ api }) {
       setProducts(result.products);
       setPage(1);
       setExpandedId(null);
-      setSyncMessage(`同步完成，共更新 ${result.count} 筆商品。`);
+      if (result.masterDiff) {
+        setMasterDiff(result.masterDiff);
+        setSelectedMissing((result.masterDiff.missing || []).map(item => item.productId));
+      } else {
+        await loadMasterDiff();
+      }
+      const missingCount = result.masterDiff?.missing?.length || 0;
+      const mismatchCount = result.masterDiff?.stockMismatches?.length || 0;
+      setSyncMessage(`同步完成，共更新 ${result.count} 筆商品。${missingCount ? `有 ${missingCount} 筆尚未建立總倉品項，請確認後手動新增。` : "所有官網商品都已對應總倉品項。"}${mismatchCount ? `另有 ${mismatchCount} 筆 Woo 庫存與總倉庫存不同。` : ""}`);
     } catch (error) {
       setError(error.message || '商品同步失敗');
       setSyncMessage('');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  function toggleMissing(productId) {
+    setSelectedMissing(prev => prev.includes(productId) ? prev.filter(id => id !== productId) : [...prev, productId]);
+  }
+
+  async function createMissingMasterProducts() {
+    if (!selectedMissing.length) return;
+    setSyncing(true);
+    setError(null);
+    try {
+      const result = await api("master-products", {
+        method: "POST",
+        body: JSON.stringify({ action: "createFromWoo", productIds: selectedMissing })
+      });
+      setMasterDiff(result);
+      setSelectedMissing((result.missing || []).map(item => item.productId));
+      setSyncMessage(`已新增 ${result.created || 0} 筆到總倉商品主檔，略過 ${result.skipped || 0} 筆已存在商品。新增品項預設總倉庫存為 0，請到「總倉庫存」確認入庫或盤點。`);
+    } catch (err) {
+      setError(err.message || "新增總倉品項失敗");
     } finally {
       setSyncing(false);
     }
@@ -1710,6 +1757,29 @@ function WooProductManager({ api }) {
         </div>
       </div>
       {syncMessage && <div className={`woo-sync-message ${syncing ? 'syncing' : ''}`}>{syncMessage}</div>}
+      {(masterDiff.missing?.length > 0 || masterDiff.stockMismatches?.length > 0) && <div className="woo-master-diff">
+        <div className="woo-master-diff-head">
+          <div><h3>官網商品與總倉比對</h3><p>同步 WooCommerce 只會更新官網快取；總倉商品主檔需由行政人員確認後才新增。</p></div>
+          <button className="primary" disabled={syncing || !selectedMissing.length} onClick={createMissingMasterProducts}><Plus /> 新增選取品項到總倉</button>
+        </div>
+        {masterDiff.missing?.length > 0 && <section>
+          <h4>尚未建立總倉品項 <span>{masterDiff.missing.length} 筆</span></h4>
+          <div className="woo-missing-grid">
+            {masterDiff.missing.slice(0, 24).map(item => <label key={item.productId} className="woo-missing-item">
+              <input type="checkbox" checked={selectedMissing.includes(item.productId)} onChange={() => toggleMissing(item.productId)} />
+              <span><strong>{item.sku}</strong><b>{item.name}</b><small>Woo 庫存：{item.wooStock ?? "未管理"} · 狀態：{item.stockStatus || "-"}</small></span>
+            </label>)}
+          </div>
+          {masterDiff.missing.length > 24 && <p className="woo-diff-note">尚有 {masterDiff.missing.length - 24} 筆未顯示，可用搜尋確認後分批新增。</p>}
+        </section>}
+        {masterDiff.stockMismatches?.length > 0 && <section>
+          <h4>Woo 庫存與總倉庫存不同 <span>{masterDiff.stockMismatches.length} 筆</span></h4>
+          <div className="woo-stock-mismatch-list">
+            {masterDiff.stockMismatches.slice(0, 12).map(item => <div key={item.productId}><strong>{item.sku}</strong><span>{item.name}</span><b>總倉 {item.warehouseStock}</b><b>Woo {item.wooStock}</b></div>)}
+          </div>
+          <p className="woo-diff-note">系統不會用 Woo 庫存覆蓋總倉庫存；如需修正，請到「總倉庫存」做補貨、出庫或盤點修正。</p>
+        </section>}
+      </div>}
       <WooPagination
         total={filtered.length}
         page={currentPage}
