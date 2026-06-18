@@ -1011,6 +1011,23 @@ function ProductMasterManager({ api }) {
     }
   }
 
+  async function showAllSyncedWooProducts() {
+    setSaving(true);
+    setError("");
+    try {
+      const res = await api("master-products", {
+        method: "POST",
+        body: JSON.stringify({ action: "showSyncedWooProducts" })
+      });
+      setMessage(`已開放 ${res.visibleCount || 0} 筆官網同步商品給經銷商查看；其中 ${res.linkedVisibleCount || 0} 筆已同步更新商品主檔可見狀態。`);
+      await load();
+    } catch (err) {
+      setError(err.message || "開放官網商品失敗");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function update(id, field, value) {
     setEditMap(prev => ({ ...prev, [id]: { ...(prev[id] || {}), [field]: value } }));
   }
@@ -1049,7 +1066,10 @@ function ProductMasterManager({ api }) {
   return <div className="master-products">
     <div className="master-intro">
       <div><h2>商品資料庫</h2><p>保存完整內部商品主檔，可包含未上官網商品；WooCommerce 同步後會用 SKU / 品號自動建立對應。</p></div>
-      <button className="outline" disabled={saving} onClick={syncWooLinks}><RefreshCw /> 對應 Woo 商品</button>
+      <div className="master-actions">
+        <button className="outline" disabled={saving} onClick={syncWooLinks}><RefreshCw /> 對應 Woo 商品</button>
+        <button className="primary" disabled={saving} onClick={showAllSyncedWooProducts}><CheckCircle2 /> 官網商品全部可見</button>
+      </div>
     </div>
     <div className="master-import">
       <label className="upload-field"><Upload /> 選擇商品 Excel<input type="file" accept=".xlsx" onChange={e => parseExcel(e.target.files?.[0])} /></label>

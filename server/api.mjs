@@ -145,6 +145,31 @@ async function syncMasterWooLinks() {
   return { wooCount: wooRows.length, linked };
 }
 
+async function showSyncedWooProducts(user) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  await syncMasterWooLinks();
+  const linkedRows = await db.sql`
+    UPDATE product_master SET dealer_visible=true, active=true, updated_at=now()
+    WHERE woo_product_id IN (SELECT product_id FROM woocommerce_product_cache)
+    RETURNING id`;
+  const wooRows = await db.sql`SELECT product_id, sku, name, payload FROM woocommerce_product_cache`;
+  for (const row of wooRows) {
+    const payload = row.payload || {};
+    const price = Number(payload.price || payload.regular_price || 0) || null;
+    const image = Array.isArray(payload.images) ? payload.images[0]?.src : null;
+    const category = Array.isArray(payload.categories)
+      ? payload.categories.find(c => c.name !== "All")?.name?.replace(/[▾▸]/g, "").trim()
+      : null;
+    await db.sql`
+      INSERT INTO product_overrides
+        (product_id, sku, name, category, price, image_url, badges, visible, updated_at)
+      VALUES (${Number(row.product_id)}, ${row.sku || ''}, ${row.name || stripHtml(String(payload.name || ''))},
+        ${category || null}, ${price}, ${image || null}, '[]'::jsonb, true, now())
+      ON CONFLICT (product_id) DO UPDATE SET visible=true, updated_at=now()`;
+  }
+  return json({ ok: true, visibleCount: wooRows.length, linkedVisibleCount: linkedRows.length });
+}
+
 async function listMasterProducts(user) {
   if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
   const rows = await db.sql`SELECT * FROM product_master ORDER BY item_no`;
@@ -195,6 +220,7 @@ async function productMasterAction(user, body) {
     if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
     return json({ ok: true, ...(await syncMasterWooLinks()) });
   }
+  if (body.action === "showSyncedWooProducts") return showSyncedWooProducts(user);
   return saveMasterProducts(user, body);
 }
 
@@ -558,8 +584,25 @@ async function updateWooCommerceProduct(user, body) {
 }
 
 async function fetchWooCommerceProducts(user, req) {
-  const cached = await db.sql`SELECT payload FROM woocommerce_product_cache ORDER BY product_id`;
-  return json(cached.map(row => row.payload));
+  const cached = await db.sql`
+    SELECT c.product_id, c.payload, o.visible AS override_visible,
+      pm.dealer_visible, pm.active AS master_active
+    FROM woocommerce_product_cache c
+    LEFT JOIN product_overrides o ON o.product_id=c.product_id
+    LEFT JOIN product_master pm ON pm.woo_product_id=c.product_id
+    ORDER BY c.product_id`;
+  const adminView = user && isAdmin(user);
+  const rows = adminView ? cached : cached.filter(row => {
+    if (row.override_visible === false) return false;
+    if (row.master_active === false) return false;
+    if (row.dealer_visible === false) return false;
+    return true;
+  });
+  return json(rows.map(row => ({
+    ...row.payload,
+    dealer_visible: row.dealer_visible !== false,
+    visible: row.override_visible !== false
+  })));
 }
 
 async function syncWooCommerceProducts(user) {
@@ -675,7 +718,7 @@ export default async function handler(req) {
     
     // Some routes are public
     if (req.method === "GET" && route === "products") {
-      return fetchWooCommerceProducts(null, req); // Public access
+      return fetchWooCommerceProducts(req.user || null, req); // Public access with optional admin view
     }
 
     const user = await auth(req);
