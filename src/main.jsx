@@ -1321,6 +1321,7 @@ function OrderManager({ orders, dealers, onUpdate }) {
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(orders[0]?.id || "");
   const [draft, setDraft] = useState({ trackingNo: "", note: "" });
+  const [itemDraft, setItemDraft] = useState({});
   const [saving, setSaving] = useState(false);
   const pendingStatuses = ["訂單成立", "已確認", "備貨中"];
   const visibleOrders = orders.filter(order => {
@@ -1340,6 +1341,10 @@ function OrderManager({ orders, dealers, onUpdate }) {
     if (selected) setDraft({ trackingNo: selected.trackingNo || "", note: selected.adminNote || "" });
   }, [selected?.id, selected?.trackingNo, selected?.adminNote]);
 
+  useEffect(() => {
+    if (selected) setItemDraft(Object.fromEntries(selected.lineItems.map(item => [item.id, item.qty])));
+  }, [selected?.id]);
+
   async function update(statusValue = selected.status) {
     if (!selected || saving) return;
     setSaving(true);
@@ -1347,7 +1352,8 @@ function OrderManager({ orders, dealers, onUpdate }) {
       await onUpdate(selected.uuid || selected.id, {
         status: statusValue,
         trackingNo: draft.trackingNo,
-        note: draft.note
+        note: draft.note,
+        ...(!quantityLocked ? { itemQuantities: itemDraft } : {})
       });
     } finally {
       setSaving(false);
@@ -1358,6 +1364,7 @@ function OrderManager({ orders, dealers, onUpdate }) {
     const index = orderStatusFlow.indexOf(current);
     return index >= 0 && index < orderStatusFlow.length - 1 ? orderStatusFlow[index + 1] : current;
   }
+  const quantityLocked = selected && ["已出貨", "已完成"].includes(selected.status);
 
   return <div className="order-admin">
     <div className="order-admin-summary">
@@ -1406,7 +1413,7 @@ function OrderManager({ orders, dealers, onUpdate }) {
           <div className="order-line-head"><span>商品</span><span>SKU</span><span>數量</span><span>經銷單價</span><span>小計</span></div>
           {selected.lineItems.map(item => <div className="order-line-row" key={item.id || item.sku}>
             <span>{item.image && <img src={item.image} alt="" />}<strong>{item.name}</strong></span>
-            <span>{item.sku}</span><b>{item.qty}</b><span>{money(item.dealerPrice)}</span><strong>{money(item.lineTotal)}</strong>
+            <span>{item.sku}</span><label className="order-qty-edit"><input type="number" min="1" disabled={quantityLocked || saving} value={itemDraft[item.id] ?? item.qty} onChange={e => setItemDraft({ ...itemDraft, [item.id]: Math.max(1, Number(e.target.value) || 1) })} /><small>原 {item.qty}</small></label><span>{money(item.dealerPrice)}</span><strong>{money(item.lineTotal)}</strong>
           </div>)}
         </div>
         <div className="order-admin-total">
@@ -1419,9 +1426,11 @@ function OrderManager({ orders, dealers, onUpdate }) {
           <label><span>內部備註</span><textarea value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} placeholder="例如：急件、缺貨品項、業務交辦事項" /></label>
           <div className="order-actions">
             <select value={selected.status} onChange={e => update(e.target.value)} disabled={saving}>{orderStatusOptions.map(option => <option key={option}>{option}</option>)}</select>
+            <button className="outline" disabled={saving || quantityLocked} onClick={() => update()}><Save /> 儲存數量與金額</button>
             <button className="outline" disabled={saving} onClick={() => update()}><Save /> 儲存物流／備註</button>
             {nextStatus(selected.status) !== selected.status && <button className="primary" disabled={saving} onClick={() => update(nextStatus(selected.status))}>{saving ? <RefreshCw className="spin-icon" /> : <ClipboardCheck />} 推進到「{nextStatus(selected.status)}」</button>}
           </div>
+          {quantityLocked && <small className="order-inventory-note warning">已出貨或已完成的訂單已可能影響寄售庫存，採購數量暫不開放修改。</small>}
           {selectedDealer?.mode === "consignment" && <small className="order-inventory-note">寄售訂單標記為「已出貨」或「已完成」後，會自動加入該經銷商寄售庫存，且不會重複入庫。</small>}
         </div>
       </article>}

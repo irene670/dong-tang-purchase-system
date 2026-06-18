@@ -180,7 +180,37 @@ async function updateOrder(user, body) {
     WHERE o.id::text=${String(orderId)} OR o.order_no=${String(orderId)}`;
   if (!orders.length) return json({ error: "找不到訂單" }, 404);
   const order = orders[0];
-  const items = await db.sql`SELECT * FROM order_items WHERE order_id=${order.id} ORDER BY id`;
+  let items = await db.sql`SELECT * FROM order_items WHERE order_id=${order.id} ORDER BY id`;
+
+  if (body.itemQuantities && typeof body.itemQuantities === "object") {
+    if (inventoryOrderStatuses.includes(order.status)) {
+      return json({ error: "此訂單已出貨或完成，為避免寄售庫存不一致，請先不要修改採購數量。" }, 400);
+    }
+    const quantityById = new Map(Object.entries(body.itemQuantities).map(([id, value]) => [String(id), Math.max(1, Math.floor(Number(value) || 1))]));
+    const pricingItems = items.map(item => ({
+      orderItemId: item.id,
+      id: item.product_id,
+      sku: item.sku,
+      name: item.product_name,
+      image: item.image_url,
+      price: item.retail_price,
+      qty: quantityById.get(String(item.id)) ?? item.quantity
+    }));
+    const pricing = calculatePricing(pricingItems, order.pricing_snapshot || order);
+    for (const line of pricing.lines) {
+      const item = items.find(row => String(row.id) === String(line.orderItemId));
+      if (!item) continue;
+      await db.sql`
+        UPDATE order_items SET quantity=${line.qty}, dealer_price=${line.unitPrice},
+          pre_tax_amount=${line.preTax}, tax_amount=${line.tax}, line_total=${line.total}
+        WHERE id=${item.id}`;
+    }
+    await db.sql`
+      UPDATE orders SET total_amount=${pricing.total}, pre_tax_amount=${pricing.preTaxTotal},
+        tax_amount=${pricing.taxTotal}, retail_total=${pricing.retailTotal}, updated_at=now()
+      WHERE id=${order.id}`;
+    items = await db.sql`SELECT * FROM order_items WHERE order_id=${order.id} ORDER BY id`;
+  }
 
   const nextTracking = String(body.trackingNo ?? order.tracking_no ?? "").trim();
   const nextNote = String(body.note ?? order.admin_note ?? "").trim();
