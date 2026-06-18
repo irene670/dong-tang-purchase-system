@@ -61,6 +61,7 @@ function canOverrideLockedOrders(user) {
 const orderStatuses = ["訂單成立", "已確認", "備貨中", "已出貨", "已完成", "已取消"];
 const inventoryOrderStatuses = ["已出貨", "已完成"];
 const transferStatuses = ["草稿", "已確認", "已調撥", "已作廢"];
+const reportStatuses = ["草稿", "待審核", "已退回", "已審核", "已轉銷貨單", "已作廢"];
 
 async function bootstrap(user) {
   const dealer = await dealerFor(user);
@@ -90,6 +91,18 @@ async function bootstrap(user) {
   const warehouseMovements = isAdmin(user)
     ? await db.sql`SELECT w.*, d.company_name FROM warehouse_movements w LEFT JOIN dealers d ON d.id=w.dealer_id ORDER BY w.created_at DESC`
     : [];
+  const reports = isAdmin(user)
+    ? await db.sql`SELECT r.*, d.company_name, s.sales_no FROM consignment_sales_reports r JOIN dealers d ON d.id=r.dealer_id LEFT JOIN sales_documents s ON s.id=r.sales_document_id ORDER BY r.created_at DESC`
+    : await db.sql`SELECT r.*, s.sales_no FROM consignment_sales_reports r LEFT JOIN sales_documents s ON s.id=r.sales_document_id WHERE r.dealer_id=${dealer.id} ORDER BY r.created_at DESC`;
+  const reportItems = reports.length
+    ? await db.sql`SELECT * FROM consignment_sales_report_items ORDER BY id`
+    : [];
+  const reportAttachments = reports.length
+    ? await db.sql`SELECT * FROM consignment_sales_report_attachments ORDER BY created_at`
+    : [];
+  const reportLogs = reports.length
+    ? await db.sql`SELECT * FROM consignment_sales_report_logs ORDER BY created_at`
+    : [];
   return {
     user: { id: user.id, email: user.email, name: user.name, roles: user.roles },
     admin: isAdmin(user),
@@ -101,6 +114,12 @@ async function bootstrap(user) {
     orders: orders.map(o => ({ ...o, items: orderItems.filter(i => i.order_id === o.id) })),
     transfers: transfers.map(t => ({ ...t, items: transferItems.filter(i => i.transfer_document_id === t.id) })),
     warehouseMovements,
+    consignmentSalesReports: reports.map(r => ({
+      ...r,
+      items: reportItems.filter(i => i.report_id === r.id),
+      attachments: reportAttachments.filter(a => a.report_id === r.id),
+      logs: reportLogs.filter(log => log.report_id === r.id)
+    })),
     sales: sales.map(s => ({ ...s, items: salesItems.filter(i => i.sales_document_id === s.id) })),
     movements
   };
@@ -236,6 +255,232 @@ async function productMasterAction(user, body) {
   }
   if (body.action === "showSyncedWooProducts") return showSyncedWooProducts(user);
   return saveMasterProducts(user, body);
+}
+
+async function currentDealerStock(dealerId, productId) {
+  const rows = await db.sql`
+    SELECT COALESCE(SUM(quantity), 0)::integer AS quantity
+    FROM inventory_movements
+    WHERE dealer_id=${dealerId} AND product_id=${Number(productId)}`;
+  return Number(rows[0]?.quantity || 0);
+}
+
+async function reportWithDetails(reportId) {
+  const rows = await db.sql`
+    SELECT r.*, d.company_name, s.sales_no
+    FROM consignment_sales_reports r
+    JOIN dealers d ON d.id=r.dealer_id
+    LEFT JOIN sales_documents s ON s.id=r.sales_document_id
+    WHERE r.id=${reportId}`;
+  if (!rows.length) return null;
+  const items = await db.sql`SELECT * FROM consignment_sales_report_items WHERE report_id=${reportId} ORDER BY id`;
+  const attachments = await db.sql`SELECT * FROM consignment_sales_report_attachments WHERE report_id=${reportId} ORDER BY created_at`;
+  const logs = await db.sql`SELECT * FROM consignment_sales_report_logs WHERE report_id=${reportId} ORDER BY created_at`;
+  return { ...rows[0], items, attachments, logs };
+}
+
+async function addReportLog(reportId, action, fromStatus, toStatus, user, note = "") {
+  await db.sql`
+    INSERT INTO consignment_sales_report_logs
+      (report_id, action, from_status, to_status, operator_email, note)
+    VALUES (${reportId}, ${action}, ${fromStatus || ''}, ${toStatus || ''}, ${user.email}, ${note})`;
+}
+
+async function createOrSubmitConsignmentReport(user, body) {
+  const dealer = await dealerFor(user);
+  if (dealer.mode !== "consignment") return json({ error: "只有寄售經銷商可以建立銷售回報單" }, 403);
+  const periodStart = String(body.periodStart || "").slice(0, 10);
+  const periodEnd = String(body.periodEnd || "").slice(0, 10);
+  if (!periodStart || !periodEnd || periodEnd < periodStart) return json({ error: "請選擇正確的回報期間" }, 400);
+  const rows = Array.isArray(body.items) ? body.items : [];
+  if (!rows.length) return json({ error: "請填寫至少一個商品銷售數量" }, 400);
+
+  const editable = body.reportId
+    ? await db.sql`SELECT * FROM consignment_sales_reports WHERE id=${body.reportId} AND dealer_id=${dealer.id}`
+    : [];
+  if (body.reportId && (!editable.length || !["草稿", "已退回"].includes(editable[0].status))) {
+    return json({ error: "此回報單目前不可修改" }, 400);
+  }
+  if (!body.reportId) {
+    const duplicate = await db.sql`
+      SELECT id, report_no FROM consignment_sales_reports
+      WHERE dealer_id=${dealer.id} AND period_start=${periodStart}::date AND period_end=${periodEnd}::date
+        AND status IN ('待審核', '已審核', '已轉銷貨單')
+      LIMIT 1`;
+    if (duplicate.length) return json({ error: `此期間已有進行中的回報單：${duplicate[0].report_no}` }, 409);
+  }
+
+  const products = await db.sql`
+    SELECT c.product_id, c.sku, c.name, c.payload
+    FROM woocommerce_product_cache c
+    JOIN (
+      SELECT product_id, COALESCE(SUM(quantity), 0)::integer AS stock
+      FROM inventory_movements
+      WHERE dealer_id=${dealer.id}
+      GROUP BY product_id
+      HAVING COALESCE(SUM(quantity), 0) > 0
+    ) inv ON inv.product_id=c.product_id`;
+  const productMap = new Map(products.map(p => [Number(p.product_id), p]));
+  const normalizedItems = [];
+  for (const row of rows) {
+    const productId = Number(row.productId ?? row.product_id);
+    const soldQty = Math.floor(Number(row.soldQuantity ?? row.sold_quantity ?? row.qty ?? 0));
+    if (!productMap.has(productId)) return json({ error: `商品 ${productId} 不可回報` }, 400);
+    if (!Number.isFinite(soldQty) || soldQty < 0) return json({ error: "銷售數量不可小於 0" }, 400);
+    const stock = await currentDealerStock(dealer.id, productId);
+    if (soldQty > stock) return json({ error: `${productMap.get(productId).name} 回報數量不可大於目前寄售庫存 ${stock}` }, 400);
+    if (soldQty > 0) {
+      const product = productMap.get(productId);
+      const retailPrice = Number(product.payload?.price || product.payload?.regular_price || 0);
+      normalizedItems.push({
+        productId,
+        sku: product.sku || String(productId),
+        name: stripHtml(String(product.name || product.payload?.name || "")),
+        stock,
+        soldQty,
+        retailPrice,
+        note: String(row.note || "")
+      });
+    }
+  }
+  if (!normalizedItems.length) return json({ error: "本期銷售數量皆為 0，不需送出回報單" }, 400);
+
+  const pricing = calculatePricing(normalizedItems.map(item => ({
+    id: item.productId,
+    sku: item.sku,
+    name: item.name,
+    price: item.retailPrice,
+    qty: item.soldQty
+  })), dealer);
+
+  let report;
+  const reportNo = body.reportId ? editable[0].report_no : `CSR-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${String(Date.now()).slice(-5)}`;
+  if (body.reportId) {
+    const updated = await db.sql`
+      UPDATE consignment_sales_reports SET period_start=${periodStart}::date, period_end=${periodEnd}::date,
+        status='待審核', note=${String(body.note || "")}, return_reason='',
+        pricing_snapshot=${JSON.stringify(pricing.settings)}::jsonb, pre_tax_amount=${pricing.preTaxTotal},
+        tax_amount=${pricing.taxTotal}, total_amount=${pricing.total}, submitted_at=now(), updated_at=now()
+      WHERE id=${body.reportId} AND dealer_id=${dealer.id}
+      RETURNING *`;
+    report = updated[0];
+    await db.sql`DELETE FROM consignment_sales_report_items WHERE report_id=${report.id}`;
+    await db.sql`DELETE FROM consignment_sales_report_attachments WHERE report_id=${report.id}`;
+    await addReportLog(report.id, "重新送出", editable[0].status, "待審核", user, body.note || "");
+  } else {
+    const inserted = await db.sql`
+      INSERT INTO consignment_sales_reports
+        (report_no, dealer_id, period_start, period_end, status, note, pricing_snapshot,
+          pre_tax_amount, tax_amount, total_amount, submitted_at, created_by)
+      VALUES (${reportNo}, ${dealer.id}, ${periodStart}::date, ${periodEnd}::date, '待審核',
+        ${String(body.note || "")}, ${JSON.stringify(pricing.settings)}::jsonb,
+        ${pricing.preTaxTotal}, ${pricing.taxTotal}, ${pricing.total}, now(), ${user.email})
+      RETURNING *`;
+    report = inserted[0];
+    await addReportLog(report.id, "送出", "", "待審核", user, body.note || "");
+  }
+
+  for (const line of pricing.lines) {
+    const source = normalizedItems.find(item => Number(item.productId) === Number(line.id));
+    await db.sql`
+      INSERT INTO consignment_sales_report_items
+        (report_id, product_id, sku, product_name, current_stock, sold_quantity,
+          retail_price, unit_price, pre_tax_amount, tax_amount, line_total, note)
+      VALUES (${report.id}, ${Number(line.id)}, ${String(line.sku)}, ${line.name},
+        ${source.stock}, ${line.qty}, ${source.retailPrice}, ${line.unitPrice},
+        ${line.preTax}, ${line.tax}, ${line.total}, ${source.note})`;
+  }
+  for (const attachment of Array.isArray(body.attachments) ? body.attachments : []) {
+    await db.sql`
+      INSERT INTO consignment_sales_report_attachments
+        (report_id, file_name, file_url, mime_type, uploaded_by)
+      VALUES (${report.id}, ${String(attachment.fileName || attachment.name || "")},
+        ${String(attachment.fileUrl || attachment.url || "")}, ${String(attachment.mimeType || "")}, ${user.email})`;
+  }
+  return json({ ok: true, report: await reportWithDetails(report.id) });
+}
+
+async function reviewConsignmentReport(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const reportId = body.reportId || body.id;
+  const nextStatus = body.status;
+  if (!reportId || !["已退回", "已審核", "已作廢"].includes(nextStatus)) return json({ error: "回報單審核狀態不正確" }, 400);
+  const rows = await db.sql`
+    SELECT r.*, d.company_name, d.mode
+    FROM consignment_sales_reports r
+    JOIN dealers d ON d.id=r.dealer_id
+    WHERE r.id::text=${String(reportId)} OR r.report_no=${String(reportId)}`;
+  if (!rows.length) return json({ error: "找不到寄售銷售回報單" }, 404);
+  const report = rows[0];
+  if (["已轉銷貨單", "已作廢"].includes(report.status) && nextStatus !== "已作廢") return json({ error: "此回報單已結案，不可再審核" }, 400);
+  const items = await db.sql`SELECT * FROM consignment_sales_report_items WHERE report_id=${report.id} ORDER BY id`;
+  if (nextStatus === "已審核") {
+    for (const item of items) {
+      const stock = await currentDealerStock(report.dealer_id, item.product_id);
+      if (Number(item.sold_quantity) > stock) return json({ error: `${item.product_name} 目前庫存 ${stock}，不足以審核 ${item.sold_quantity}` }, 400);
+    }
+  }
+  const updated = await db.sql`
+    UPDATE consignment_sales_reports SET status=${nextStatus},
+      return_reason=CASE WHEN ${nextStatus}='已退回' THEN ${String(body.reason || body.note || "")} ELSE return_reason END,
+      reviewed_at=CASE WHEN ${nextStatus} IN ('已退回','已審核') THEN now() ELSE reviewed_at END,
+      voided_at=CASE WHEN ${nextStatus}='已作廢' THEN now() ELSE voided_at END,
+      reviewed_by=${user.email}, updated_at=now()
+    WHERE id=${report.id}
+    RETURNING *`;
+  await addReportLog(report.id, nextStatus === "已審核" ? "審核通過" : nextStatus === "已退回" ? "退回" : "作廢", report.status, nextStatus, user, body.reason || body.note || "");
+  return json({ ok: true, report: await reportWithDetails(updated[0].id) });
+}
+
+async function convertConsignmentReportToSales(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const reportId = body.reportId || body.id;
+  const reports = await db.sql`
+    SELECT r.*, d.company_name, d.mode, d.discount_percent, d.hide_dealer_price,
+      d.tax_mode, d.tax_rate, d.calculation_scope, d.rounding_mode, d.rounding_digits
+    FROM consignment_sales_reports r
+    JOIN dealers d ON d.id=r.dealer_id
+    WHERE r.id::text=${String(reportId)} OR r.report_no=${String(reportId)}`;
+  if (!reports.length) return json({ error: "找不到寄售銷售回報單" }, 404);
+  const report = reports[0];
+  if (report.status !== "已審核") return json({ error: "只有已審核的回報單可以轉銷貨單" }, 400);
+  const items = await db.sql`SELECT * FROM consignment_sales_report_items WHERE report_id=${report.id} ORDER BY id`;
+  for (const item of items) {
+    const stock = await currentDealerStock(report.dealer_id, item.product_id);
+    if (Number(item.sold_quantity) > stock) return json({ error: `${item.product_name} 目前庫存 ${stock}，不足以轉銷貨單` }, 400);
+  }
+  const salesNo = `SO-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${String(Date.now()).slice(-5)}`;
+  const salesMonth = String(report.period_end).slice(0, 7);
+  const inserted = await db.sql`
+    INSERT INTO sales_documents
+      (sales_no, dealer_id, sales_month, sales_date, status, note,
+        pricing_snapshot, pre_tax_amount, tax_amount, total_amount, inventory_applied_at)
+    VALUES (${salesNo}, ${report.dealer_id}, ${salesMonth}, ${String(report.period_end).slice(0, 10)}::date,
+      '已確認', ${`由寄售銷售回報單 ${report.report_no} 轉入`}, ${JSON.stringify(report.pricing_snapshot)}::jsonb,
+      ${report.pre_tax_amount}, ${report.tax_amount}, ${report.total_amount}, now())
+    RETURNING *`;
+  const salesDoc = inserted[0];
+  for (const item of items) {
+    await db.sql`
+      INSERT INTO sales_document_items
+        (sales_document_id, product_id, sku, product_name, quantity, unit_price)
+      VALUES (${salesDoc.id}, ${Number(item.product_id)}, ${item.sku}, ${item.product_name},
+        ${Number(item.sold_quantity)}, ${Number(item.unit_price)})`;
+    await db.sql`
+      INSERT INTO inventory_movements
+        (dealer_id, product_id, movement_type, quantity, source_type, source_id,
+          idempotency_key, operator_email, note)
+      VALUES (${report.dealer_id}, ${Number(item.product_id)}, '寄售銷售回報扣庫存',
+        ${-Number(item.sold_quantity)}, 'consignment_sales_report', ${report.report_no},
+        ${`report:${report.id}:${item.id}:sales-deduct`}, ${user.email}, ${`轉銷貨單 ${salesNo}`})
+      ON CONFLICT (idempotency_key) DO NOTHING`;
+  }
+  await db.sql`
+    UPDATE consignment_sales_reports SET status='已轉銷貨單', sales_document_id=${salesDoc.id},
+      converted_at=now(), updated_at=now(), reviewed_by=${user.email}
+    WHERE id=${report.id}`;
+  await addReportLog(report.id, "轉銷貨單", report.status, "已轉銷貨單", user, salesNo);
+  return json({ ok: true, salesNo, report: await reportWithDetails(report.id) });
 }
 
 async function createOrder(user, body) {
@@ -910,6 +1155,15 @@ export default async function handler(req) {
     }
     if (["updateTransfer", "transfer"].includes(action) && ["POST", "PUT", "PATCH"].includes(req.method)) {
       return updateTransfer(user, body);
+    }
+    if (["submitConsignmentSalesReport", "consignment-report-submit"].includes(action) && req.method === "POST") {
+      return createOrSubmitConsignmentReport(user, body);
+    }
+    if (["reviewConsignmentSalesReport", "consignment-report-review"].includes(action) && req.method === "POST") {
+      return reviewConsignmentReport(user, body);
+    }
+    if (["convertConsignmentSalesReport", "consignment-report-convert"].includes(action) && req.method === "POST") {
+      return convertConsignmentReportToSales(user, body);
     }
     if (["updateOrder", "order"].includes(action) && ["POST", "PUT", "PATCH"].includes(req.method)) {
       return updateOrder(user, body);

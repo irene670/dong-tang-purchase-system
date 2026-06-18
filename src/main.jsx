@@ -213,6 +213,7 @@ function App() {
   const [orders, setOrders] = useState([]);
   const [transfers, setTransfers] = useState([]);
   const [warehouseMovements, setWarehouseMovements] = useState([]);
+  const [consignmentReports, setConsignmentReports] = useState([]);
   const [dealerRecords, setDealerRecords] = useState([]);
   const [currentDealerId, setCurrentDealerId] = useState("");
   const [stores, setStores] = useState([]);
@@ -366,6 +367,41 @@ function App() {
       source: row.source_id,
       operator: row.operator_email,
       note: row.note
+    })));
+    setConsignmentReports((data.consignmentSalesReports || []).map(row => ({
+      uuid: row.id,
+      id: row.report_no,
+      company: row.company_name || dealer.company_name,
+      dealerId: row.dealer_id,
+      periodStart: String(row.period_start).slice(0, 10),
+      periodEnd: String(row.period_end).slice(0, 10),
+      status: row.status,
+      note: row.note,
+      returnReason: row.return_reason,
+      pricing: row.pricing_snapshot,
+      preTaxAmount: Number(row.pre_tax_amount || 0),
+      taxAmount: Number(row.tax_amount || 0),
+      totalAmount: Number(row.total_amount || 0),
+      salesNo: row.sales_no,
+      submittedAt: row.submitted_at,
+      reviewedAt: row.reviewed_at,
+      convertedAt: row.converted_at,
+      items: (row.items || []).map(item => ({
+        id: item.id,
+        productId: Number(item.product_id),
+        sku: item.sku,
+        name: item.product_name,
+        currentStock: Number(item.current_stock || 0),
+        soldQty: Number(item.sold_quantity || 0),
+        retailPrice: Number(item.retail_price || 0),
+        unitPrice: Number(item.unit_price || 0),
+        preTaxAmount: Number(item.pre_tax_amount || 0),
+        taxAmount: Number(item.tax_amount || 0),
+        lineTotal: Number(item.line_total || 0),
+        note: item.note
+      })),
+      attachments: row.attachments || [],
+      logs: row.logs || []
     })));
     setOrders(data.orders.map(row => ({
       uuid: row.id,
@@ -605,6 +641,36 @@ function App() {
     return result.transfer;
   }
 
+  async function submitConsignmentReport(payload) {
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "submitConsignmentSalesReport", ...payload })
+    });
+    await loadAccount({ preserveView: true });
+    notify(`寄售銷售回報單 ${result.report.report_no} 已送出`);
+    return result.report;
+  }
+
+  async function reviewConsignmentReport(reportId, patch) {
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "reviewConsignmentSalesReport", reportId, ...patch })
+    });
+    await loadAccount({ preserveView: true });
+    notify(`回報單 ${result.report.report_no} 已更新為 ${result.report.status}`);
+    return result.report;
+  }
+
+  async function convertConsignmentReport(reportId) {
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "convertConsignmentSalesReport", reportId })
+    });
+    await loadAccount({ preserveView: true });
+    notify(`已轉成銷貨單 ${result.salesNo} 並沖抵寄售庫存`);
+    return result;
+  }
+
   if (authLoading) return <div className="loading-screen"><RefreshCw /> 正在確認登入狀態...</div>;
   if (authCallback) return <SetPassword mode={authCallback.type} onSubmit={completePassword} />;
   if (!user) return <Login onLogin={login} />;
@@ -621,6 +687,7 @@ function App() {
           {!admin && <button className={view === "home" ? "active" : ""} onClick={() => { setView("home"); setMobileNav(false); }}>夥伴首頁</button>}
           {!admin && <button className={view === "shop" ? "active" : ""} onClick={() => { setView("shop"); setMobileNav(false); }}>商品採購</button>}
           {!admin && <button className={view === "orders" ? "active" : ""} onClick={() => { setView("orders"); setMobileNav(false); }}>單據與進度</button>}
+          {!admin && channelSettings.mode === "consignment" && <button className={view === "consignmentReport" ? "active" : ""} onClick={() => { setView("consignmentReport"); setMobileNav(false); }}>寄售銷售回報</button>}
           <button className={view === "profile" ? "active" : ""} onClick={() => { setView("profile"); setMobileNav(false); }}>廠商資料</button>
           {admin && <button className={view === "admin" ? "active" : ""} onClick={() => { setView("admin"); setMobileNav(false); }}>內容管理</button>}
           <a href="https://eavo.com.tw/" target="_blank">品牌官網</a>
@@ -685,12 +752,14 @@ function App() {
           </section>
         </main>
       ) : view === "orders" ? <DocumentCenter company={user.company} orders={orders} sales={sales.filter(s => s.company === user.company)} products={managedProducts} movements={movements.filter(m => m.company === user.company)} settings={channelSettings} />
+        : view === "consignmentReport" ? <ConsignmentReportCenter company={user.company} products={managedProducts} movements={movements.filter(m => m.company === user.company)} reports={consignmentReports.filter(r => r.company === user.company)} settings={channelSettings} onSubmit={submitConsignmentReport} />
         : view === "profile" ? <DealerProfileManager admin={admin} currentCompany={user.company} dealers={dealerRecords} stores={stores} onSaveProfile={saveProfile} onSaveStore={saveStore} />
         : <AdminPanel api={api} content={content} products={products} productEdits={productEdits} channels={channels}
           dealers={dealerRecords} orders={orders} transfers={transfers} warehouseMovements={warehouseMovements}
-          movements={movements} sales={sales} onSave={saveAdmin}
+          movements={movements} sales={sales} consignmentReports={consignmentReports} onSave={saveAdmin}
           onSaveInventory={saveInventory} onCreateDealerAccount={createDealerAccount}
-          onUpdateOrder={updateOrder} onCreateTransfer={createTransferFromOrder} onUpdateTransfer={updateTransfer} />}
+          onUpdateOrder={updateOrder} onCreateTransfer={createTransferFromOrder} onUpdateTransfer={updateTransfer}
+          onReviewConsignmentReport={reviewConsignmentReport} onConvertConsignmentReport={convertConsignmentReport} />}
 
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
     </div>
@@ -1555,7 +1624,7 @@ function WooCommerceSettings({ api }) {
   );
 }
 
-function AdminPanel({ api, content, products, productEdits, channels, dealers, orders, transfers, warehouseMovements, movements, sales, onSave, onSaveInventory, onCreateDealerAccount, onUpdateOrder, onCreateTransfer, onUpdateTransfer }) {
+function AdminPanel({ api, content, products, productEdits, channels, dealers, orders, transfers, warehouseMovements, movements, sales, consignmentReports, onSave, onSaveInventory, onCreateDealerAccount, onUpdateOrder, onCreateTransfer, onUpdateTransfer, onReviewConsignmentReport, onConvertConsignmentReport }) {
   const [tab, setTab] = useState("home");
   const [draft, setDraft] = useState(content);
   const [edits, setEdits] = useState(productEdits);
@@ -1569,7 +1638,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
     <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">帳號、內容、訂單與正式營運資料由目前的 GCP 伺服器與 PostgreSQL 資料庫集中管理。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button><button className={tab === "transfers" ? "active" : ""} onClick={() => setTab("transfers")}><Truck /> 調撥／倉儲</button><button className={tab === "masterProducts" ? "active" : ""} onClick={() => setTab("masterProducts")}><Database /> 商品資料庫</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 官網商品同步</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
+      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button><button className={tab === "transfers" ? "active" : ""} onClick={() => setTab("transfers")}><Truck /> 調撥／倉儲</button><button className={tab === "masterProducts" ? "active" : ""} onClick={() => setTab("masterProducts")}><Database /> 商品資料庫</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 官網商品同步</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}><ClipboardCheck /> 寄售回報審核</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
       <section className="admin-content">
         {tab === "api" ? <WooCommerceSettings api={api} /> : tab === "home" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
@@ -1586,7 +1655,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
@@ -2071,6 +2140,175 @@ function FormalSalesImport({ channels, products, movements, sales, onSave }) {
     {errors.length > 0 && <div className="import-errors"><strong>匯入前請修正：</strong>{errors.map(error => <span key={error}>{error}</span>)}</div>}
     {rows.length > 0 && <div className="import-preview table-scroll"><div className="import-head"><span>列</span><span>經銷商</span><span>月份／日期</span><span>SKU／商品</span><span>數量</span><span>單價</span><span>預計庫存</span></div>{rows.map(row => <div className="import-row" key={row.rowNumber}><span>{row.rowNumber}</span><strong>{row.company}</strong><span>{row.month}<small>{row.date}</small></span><span>{row.sku}<small>{productBySku[row.sku]?.name || row.name}</small></span><b>{row.qty}</b><span>{money(row.price)}</span><span>{productBySku[row.sku] ? stockOf(movements, row.company, productBySku[row.sku].id) - row.qty : "-"}</span></div>)}</div>}
     <button className="primary import-confirm" disabled={!rows.length || errors.length > 0} onClick={confirmImport}><CheckCircle2 /> 確認匯入並沖銷庫存</button>
+  </div>;
+}
+
+function monthRange() {
+  const now = new Date();
+  const format = date => `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  const start = format(new Date(now.getFullYear(), now.getMonth(), 1));
+  const end = format(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+  return { start, end };
+}
+
+function ConsignmentReportCenter({ company, products, movements, reports, settings, onSubmit }) {
+  const [tab, setTab] = useState("report");
+  const [period, setPeriod] = useState(monthRange());
+  const [qty, setQty] = useState({});
+  const [note, setNote] = useState("");
+  const [file, setFile] = useState(null);
+  const [submitting, setSubmitting] = useState(false);
+  const stockRows = products
+    .map(product => ({ ...product, stock: stockOf(movements, company, product.id) }))
+    .filter(product => product.stock > 0)
+    .sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name, "zh-Hant"));
+  const selectedRows = stockRows
+    .map(product => ({ ...product, soldQty: Math.max(0, Math.floor(Number(qty[product.id] || 0))) }))
+    .filter(product => product.soldQty > 0);
+  const pricing = calculatePricing(selectedRows.map(product => ({
+    id: product.id,
+    sku: product.sku,
+    name: product.name,
+    price: product.price,
+    qty: product.soldQty
+  })), settings);
+
+  function changeQty(product, value) {
+    const next = Math.max(0, Math.min(product.stock, Math.floor(Number(value) || 0)));
+    setQty(previous => ({ ...previous, [product.id]: next }));
+  }
+
+  async function submit() {
+    if (!selectedRows.length || submitting) return;
+    setSubmitting(true);
+    try {
+      let attachment = null;
+      if (file) {
+        let url = file.name;
+        try { url = await uploadSalesFile(file); } catch { /* Keep filename when Drive upload is unavailable. */ }
+        attachment = { fileName: file.name, fileUrl: url, mimeType: file.type };
+      }
+      await onSubmit({
+        periodStart: period.start,
+        periodEnd: period.end,
+        note,
+        items: selectedRows.map(product => ({ productId: product.id, soldQuantity: product.soldQty })),
+        attachments: attachment ? [attachment] : []
+      });
+      setQty({});
+      setNote("");
+      setFile(null);
+      setTab("history");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return <main className="consignment-page">
+    <section className="orders-intro"><span className="eyebrow">CONSIGNMENT SALES</span><h1>寄售銷售回報</h1><p>回報本期實際銷售數量，東瑭審核後會轉成銷貨單並沖抵寄售庫存。</p></section>
+    <div className="document-tabs"><button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>我的寄售庫存</button><button className={tab === "report" ? "active" : ""} onClick={() => setTab("report")}>填寫銷售回報</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>銷售回報紀錄</button></div>
+    {tab === "stock" && <section className="consignment-card">
+      <div className="report-section-title"><div><h2>目前寄售庫存</h2><p>以下商品為目前仍寄放於通路端的品項。</p></div><strong>{stockRows.length} 項</strong></div>
+      <div className="consignment-stock-head"><span>SKU</span><span>商品</span><span>目前庫存</span><span>建議</span></div>
+      {stockRows.length ? stockRows.map(product => <div className="consignment-stock-row" key={product.id}><span>{product.sku}</span><strong>{product.name}</strong><b>{product.stock} 件</b><span className={product.stock <= 5 ? "low" : ""}>{product.stock <= 5 ? "低庫存，可安排補貨" : "庫存正常"}</span></div>) : <div className="document-empty">目前沒有寄售庫存。</div>}
+    </section>}
+    {tab === "report" && <section className="consignment-card">
+      <div className="report-section-title"><div><h2>本期銷售數量</h2><p>只需填寫本期有銷售的商品，數量不可超過目前寄售庫存。</p></div><span>{selectedRows.length} 項／{selectedRows.reduce((sum, item) => sum + item.soldQty, 0)} 件</span></div>
+      <div className="report-period">
+        <label>回報起日<input type="date" value={period.start} onChange={e => setPeriod({ ...period, start: e.target.value })} /></label>
+        <label>回報迄日<input type="date" value={period.end} onChange={e => setPeriod({ ...period, end: e.target.value })} /></label>
+        <label>附件上傳<input type="file" onChange={e => setFile(e.target.files?.[0] || null)} /></label>
+      </div>
+      <div className="report-entry-head"><span>SKU</span><span>商品</span><span>目前庫存</span><span>本期銷售</span><span>預估金額</span></div>
+      {stockRows.length ? stockRows.map(product => {
+        const soldQty = Number(qty[product.id] || 0);
+        return <div className="report-entry-row" key={product.id}>
+          <span>{product.sku}</span>
+          <strong>{product.name}</strong>
+          <b>{product.stock} 件</b>
+          <div className="row-qty compact"><button onClick={() => changeQty(product, soldQty - 1)}><Minus /></button><input type="number" min="0" max={product.stock} value={soldQty} onChange={e => changeQty(product, e.target.value)} /><button onClick={() => changeQty(product, soldQty + 1)}><Plus /></button></div>
+          <span>{soldQty ? money(dealerPriceWithSettings(product.price, settings) * soldQty) : "-"}</span>
+        </div>;
+      }) : <div className="document-empty">目前沒有可回報的寄售商品。</div>}
+      <textarea className="report-note" value={note} onChange={e => setNote(e.target.value)} placeholder="備註：例如本期銷售單號、特殊折讓或需東瑭協助確認的事項" />
+      <div className="report-submit-bar"><div><span>預估應收金額</span><strong>{money(pricing.total)}</strong><small>{pricingDescription(settings)}</small></div><button className="primary" disabled={!selectedRows.length || submitting || period.end < period.start} onClick={submit}>{submitting ? <><RefreshCw className="spin-icon" /> 送出中...</> : <><ClipboardCheck /> 送出回報單</>}</button></div>
+    </section>}
+    {tab === "history" && <section className="consignment-card">
+      <div className="report-section-title"><div><h2>回報單紀錄</h2><p>可查看審核狀態、退回原因與已轉出的正式銷貨單號。</p></div><strong>{reports.length} 筆</strong></div>
+      {reports.length ? reports.map(report => <article className="report-history-card" key={report.id}>
+        <div><span className={`status ${report.status === "已退回" ? "cancelled" : report.status === "待審核" ? "preparing" : ""}`}>{report.status}</span><h3>{report.id}</h3><small>{report.periodStart} 至 {report.periodEnd} · {report.items.reduce((sum, item) => sum + item.soldQty, 0)} 件</small>{report.returnReason && <p>退回原因：{report.returnReason}</p>}{report.salesNo && <p>已轉銷貨單：{report.salesNo}</p>}</div>
+        <strong>{money(report.totalAmount)}</strong>
+      </article>) : <div className="document-empty">目前尚未建立寄售銷售回報單。</div>}
+    </section>}
+  </main>;
+}
+
+function dealerPriceWithSettings(price, settings) {
+  const pricing = calculatePricing([{ id: "single", name: "", price, qty: 1 }], settings);
+  return pricing.lines[0]?.unitPrice || 0;
+}
+
+function ConsignmentReportAdmin({ reports, movements, onReview, onConvert }) {
+  const [status, setStatus] = useState("待審核");
+  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState(reports[0]?.id || "");
+  const [reason, setReason] = useState("");
+  const [saving, setSaving] = useState(false);
+  const visible = reports.filter(report => {
+    const matchStatus = status === "全部" || report.status === status;
+    const haystack = `${report.id} ${report.company} ${report.salesNo || ""}`.toLowerCase();
+    return matchStatus && haystack.includes(query.toLowerCase());
+  });
+  const selected = reports.find(report => report.id === selectedId) || visible[0] || reports[0];
+  const hasStockIssue = selected?.items?.some(item => item.soldQty > stockOf(movements, selected.company, item.productId));
+
+  async function review(nextStatus) {
+    if (!selected || saving) return;
+    setSaving(true);
+    try {
+      await onReview(selected.uuid || selected.id, { status: nextStatus, reason });
+      setReason("");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function convert() {
+    if (!selected || saving) return;
+    setSaving(true);
+    try {
+      await onConvert(selected.uuid || selected.id);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return <div className="report-admin">
+    <div className="report-section-title"><div><h2>寄售銷售回報審核</h2><p>確認客戶回報數量，審核後可轉成銷貨單並自動扣除寄售庫存。</p></div><strong>{reports.filter(r => r.status === "待審核").length} 筆待審核</strong></div>
+    <div className="order-tools"><select value={status} onChange={e => setStatus(e.target.value)}><option>待審核</option><option>已退回</option><option>已審核</option><option>已轉銷貨單</option><option>已作廢</option><option>全部</option></select><input value={query} onChange={e => setQuery(e.target.value)} placeholder="搜尋單號、經銷商、銷貨單" /></div>
+    <div className="report-admin-layout">
+      <div className="report-list">{visible.map(report => <button key={report.id} className={selected?.id === report.id ? "active" : ""} onClick={() => setSelectedId(report.id)}><strong>{report.id}</strong><small>{report.company} · {report.periodStart} 至 {report.periodEnd}</small><span>{report.status}</span></button>)}{!visible.length && <div className="document-empty">沒有符合條件的回報單。</div>}</div>
+      {selected && <div className="report-detail-panel">
+        <div className="order-detail-head"><div><span>{selected.company}</span><h2>{selected.id}</h2><small>{selected.periodStart} 至 {selected.periodEnd}</small></div><span className={`status ${selected.status === "待審核" ? "preparing" : ""}`}>{selected.status}</span></div>
+        {hasStockIssue && <div className="admin-warning">有品項回報數量超過目前寄售庫存，請先確認庫存異動後再審核。</div>}
+        <div className="report-detail-head"><span>SKU</span><span>商品</span><span>回報數量</span><span>目前庫存</span><span>金額</span></div>
+        {selected.items.map(item => {
+          const currentStock = stockOf(movements, selected.company, item.productId);
+          return <div className="report-detail-row" key={item.id}><span>{item.sku}</span><strong>{item.name}</strong><b>{item.soldQty}</b><span className={item.soldQty > currentStock ? "low" : ""}>{currentStock}</span><strong>{money(item.lineTotal)}</strong></div>;
+        })}
+        <div className="report-admin-summary"><span>未稅 {money(selected.preTaxAmount)}</span><span>稅額 {money(selected.taxAmount)}</span><strong>總額 {money(selected.totalAmount)}</strong></div>
+        {selected.returnReason && <div className="admin-warning">退回原因：{selected.returnReason}</div>}
+        {selected.salesNo && <div className="admin-notice">已轉銷貨單：{selected.salesNo}</div>}
+        {selected.attachments?.length > 0 && <div className="document-files">{selected.attachments.map(file => <a key={file.id || file.file_url} href={file.file_url || "#"} target="_blank"><FileText /> {file.file_name || "附件"}</a>)}</div>}
+        <textarea value={reason} onChange={e => setReason(e.target.value)} placeholder="退回或作廢原因／審核備註" />
+        <div className="report-admin-actions">
+          <button className="outline danger" disabled={saving || !["待審核", "已審核"].includes(selected.status)} onClick={() => review("已退回")}>退回修改</button>
+          <button className="outline" disabled={saving || selected.status !== "待審核" || hasStockIssue} onClick={() => review("已審核")}>審核通過</button>
+          <button className="primary" disabled={saving || selected.status !== "已審核" || hasStockIssue} onClick={convert}>轉成銷貨單並沖帳</button>
+          <button className="outline danger" disabled={saving || ["已轉銷貨單", "已作廢"].includes(selected.status)} onClick={() => review("已作廢")}>作廢</button>
+        </div>
+      </div>}
+    </div>
   </div>;
 }
 
