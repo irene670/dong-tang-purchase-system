@@ -8,7 +8,7 @@ const identityAdmin = {
     const roles = data.app_metadata?.roles || ['dealer'];
     const fullName = data.user_metadata?.full_name || '';
     const company = data.user_metadata?.company || '';
-    
+
     const rows = await db.sql`
       INSERT INTO users (email, password_hash, roles, full_name, company)
       VALUES (${email}, ${passwordHash}, ${roles}, ${fullName}, ${company})
@@ -62,6 +62,12 @@ const orderStatuses = ["訂單成立", "已確認", "備貨中", "已出貨", "�
 const inventoryOrderStatuses = ["已出貨", "已完成"];
 const transferStatuses = ["草稿", "已確認", "已調撥", "已作廢"];
 const reportStatuses = ["草稿", "待審核", "已退回", "已審核", "已轉銷貨單", "已作廢"];
+const shipmentStatuses = ["待產生揀貨單", "待揀貨", "揀貨中", "缺貨異常", "待包裝", "包裝中", "待出貨", "已出貨", "取消"];
+const pickingStatuses = ["待揀貨", "揀貨中", "部分完成", "缺貨異常", "已完成", "取消"];
+
+function docNo(prefix) {
+  return `${prefix}-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${String(Date.now()).slice(-5)}`;
+}
 
 async function bootstrap(user) {
   const dealer = await dealerFor(user);
@@ -501,6 +507,429 @@ async function warehouseInventoryAction(user, body) {
       ${sourceType}, ${sourceId}, ${idempotencyKey}, ${user.email}, ${note}, ${before}, ${after}, ${reason})
     RETURNING *`;
   return json({ ok: true, movement: rows[0], product: await warehouseProductStock(product.id), stockCount });
+}
+
+async function ensureWarehouseLocation(locationCode, productMasterId = null) {
+  const code = String(locationCode || "").trim();
+  if (!code) return null;
+  const rows = await db.sql`
+    INSERT INTO warehouse_locations
+      (location_code, qr_code_value, product_master_id, updated_at)
+    VALUES (${code}, ${`LOCATION:${code}`}, ${productMasterId || null}, now())
+    ON CONFLICT (location_code) DO UPDATE SET
+      product_master_id=COALESCE(warehouse_locations.product_master_id, EXCLUDED.product_master_id),
+      qr_code_value=EXCLUDED.qr_code_value,
+      updated_at=now()
+    RETURNING *`;
+  return rows[0];
+}
+
+async function shipmentBundle(shipmentId) {
+  const rows = await db.sql`
+    SELECT s.*, d.company_name
+    FROM shipment_orders s
+    LEFT JOIN dealers d ON d.id=s.dealer_id
+    WHERE s.id=${shipmentId}`;
+  if (!rows.length) return null;
+  const items = await db.sql`SELECT * FROM shipment_items WHERE shipment_id=${shipmentId} ORDER BY id`;
+  const pickings = await db.sql`SELECT * FROM picking_orders WHERE shipment_id=${shipmentId} ORDER BY created_at DESC`;
+  const pickingIds = pickings.map(row => row.id);
+  const pickingItems = pickingIds.length
+    ? await db.sql`SELECT * FROM picking_order_items WHERE picking_order_id = ANY(${pickingIds}::uuid[]) ORDER BY id`
+    : [];
+  return { ...rows[0], items, pickings: pickings.map(row => ({ ...row, items: pickingItems.filter(item => item.picking_order_id === row.id) })) };
+}
+
+async function listShipments(user) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const shipments = await db.sql`
+    SELECT s.*, d.company_name, sd.sales_no
+    FROM shipment_orders s
+    LEFT JOIN dealers d ON d.id=s.dealer_id
+    LEFT JOIN sales_documents sd ON sd.id=s.source_sales_document_id
+    ORDER BY s.created_at DESC
+    LIMIT 200`;
+  const shipmentIds = shipments.map(row => row.id);
+  const shipmentItems = shipmentIds.length
+    ? await db.sql`SELECT * FROM shipment_items WHERE shipment_id = ANY(${shipmentIds}::uuid[]) ORDER BY id`
+    : [];
+  const pickings = shipmentIds.length
+    ? await db.sql`SELECT * FROM picking_orders WHERE shipment_id = ANY(${shipmentIds}::uuid[]) ORDER BY created_at DESC`
+    : [];
+  const pickingIds = pickings.map(row => row.id);
+  const pickingItems = pickingIds.length
+    ? await db.sql`SELECT * FROM picking_order_items WHERE picking_order_id = ANY(${pickingIds}::uuid[]) ORDER BY id`
+    : [];
+  const exceptions = await db.sql`
+    SELECT e.*, s.shipment_no, p.picking_no
+    FROM shipment_exceptions e
+    LEFT JOIN shipment_orders s ON s.id=e.shipment_id
+    LEFT JOIN picking_orders p ON p.id=e.picking_order_id
+    ORDER BY e.created_at DESC
+    LIMIT 200`;
+  const locations = await db.sql`
+    SELECT l.*, pm.item_no, pm.name AS product_name
+    FROM warehouse_locations l
+    LEFT JOIN product_master pm ON pm.id=l.product_master_id
+    ORDER BY l.location_code
+    LIMIT 500`;
+  const pendingSales = await db.sql`
+    SELECT s.*, d.company_name,
+      COUNT(i.id)::integer AS item_count,
+      COALESCE(SUM(i.quantity * i.unit_price), 0)::integer AS estimated_total
+    FROM sales_documents s
+    JOIN dealers d ON d.id=s.dealer_id
+    LEFT JOIN sales_document_items i ON i.sales_document_id=s.id
+    LEFT JOIN shipment_orders sh ON sh.source_sales_document_id=s.id AND sh.status <> '取消'
+    WHERE sh.id IS NULL AND s.status <> '已作廢'
+    GROUP BY s.id, d.company_name
+    ORDER BY s.sales_date DESC
+    LIMIT 100`;
+  return json({
+    ok: true,
+    pendingSales,
+    shipments: shipments.map(row => ({
+      ...row,
+      items: shipmentItems.filter(item => item.shipment_id === row.id),
+      pickings: pickings
+        .filter(picking => picking.shipment_id === row.id)
+        .map(picking => ({ ...picking, items: pickingItems.filter(item => item.picking_order_id === picking.id) }))
+    })),
+    exceptions,
+    locations
+  });
+}
+
+async function findMasterForSalesItem(item) {
+  const rows = await db.sql`
+    SELECT pm.*,
+      (pm.stock_quantity + COALESCE(SUM(wm.quantity), 0))::integer AS current_stock
+    FROM product_master pm
+    LEFT JOIN warehouse_movements wm
+      ON wm.product_master_id=pm.id
+      OR (pm.woo_product_id IS NOT NULL AND wm.product_id=pm.woo_product_id)
+    WHERE pm.woo_product_id=${Number(item.product_id)}
+      OR (NULLIF(pm.item_no, '') IS NOT NULL AND pm.item_no=${item.sku})
+      OR (NULLIF(pm.barcode, '') IS NOT NULL AND pm.barcode=${item.sku})
+      OR (NULLIF(pm.woo_sku, '') IS NOT NULL AND pm.woo_sku=${item.sku})
+    GROUP BY pm.id
+    ORDER BY
+      CASE
+        WHEN pm.woo_product_id=${Number(item.product_id)} THEN 0
+        WHEN pm.item_no=${item.sku} THEN 1
+        WHEN pm.barcode=${item.sku} THEN 2
+        ELSE 3
+      END,
+      pm.updated_at DESC
+    LIMIT 1`;
+  return rows[0] || null;
+}
+
+async function createShipmentFromSales(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const salesDocumentId = body.salesDocumentId || body.salesId || body.id;
+  if (!salesDocumentId) return json({ error: "請選擇銷貨單" }, 400);
+  const salesRows = await db.sql`
+    SELECT s.*, d.company_name, d.tax_id, d.contact_name, d.phone, d.billing_email
+    FROM sales_documents s
+    JOIN dealers d ON d.id=s.dealer_id
+    WHERE s.id::text=${String(salesDocumentId)} OR s.sales_no=${String(salesDocumentId)}`;
+  if (!salesRows.length) return json({ error: "找不到銷貨單" }, 404);
+  const sales = salesRows[0];
+  const existing = await db.sql`
+    SELECT id FROM shipment_orders
+    WHERE source_sales_document_id=${sales.id} AND status <> '取消'
+    ORDER BY created_at DESC
+    LIMIT 1`;
+  if (existing.length) return json({ ok: true, shipment: await shipmentBundle(existing[0].id), existed: true });
+
+  const salesItems = await db.sql`SELECT * FROM sales_document_items WHERE sales_document_id=${sales.id} ORDER BY id`;
+  if (!salesItems.length) return json({ error: "銷貨單沒有商品明細" }, 400);
+  const shipmentNo = docNo("SH");
+  const snapshot = {
+    companyName: sales.company_name,
+    taxId: sales.tax_id || "",
+    contactName: sales.contact_name || "",
+    phone: sales.phone || "",
+    email: sales.billing_email || "",
+    salesNo: sales.sales_no,
+    salesDate: sales.sales_date
+  };
+  const created = await db.sql`
+    INSERT INTO shipment_orders
+      (shipment_no, source_sales_document_id, dealer_id, customer_name, customer_snapshot, note, created_by)
+    VALUES (${shipmentNo}, ${sales.id}, ${sales.dealer_id}, ${sales.company_name},
+      ${JSON.stringify(snapshot)}::jsonb, ${String(body.note || "")}, ${user.email})
+    RETURNING *`;
+  const shipment = created[0];
+
+  for (const item of salesItems) {
+    const master = await findMasterForSalesItem(item);
+    const location = master?.storage_location ? await ensureWarehouseLocation(master.storage_location, master.id) : null;
+    const currentStock = Number(master?.current_stock || 0);
+    const shortageQty = Math.max(0, Number(item.quantity) - currentStock);
+    const status = shortageQty > 0 ? "缺貨" : "待揀貨";
+    const insertedItems = await db.sql`
+      INSERT INTO shipment_items
+        (shipment_id, sales_document_item_id, product_master_id, product_id, item_code, barcode,
+          item_name, unit, required_qty, shortage_qty, location_id, location_code, status,
+          note)
+      VALUES (${shipment.id}, ${item.id}, ${master?.id || null}, ${Number(item.product_id)},
+        ${master?.item_no || item.sku || String(item.product_id)}, ${master?.barcode || item.sku || ""},
+        ${item.product_name}, ${master?.unit || "pcs"}, ${Number(item.quantity)}, ${shortageQty},
+        ${location?.id || null}, ${location?.location_code || master?.storage_location || ""},
+        ${status}, ${master ? "" : "尚未對應總倉商品主檔"})
+      RETURNING *`;
+    if (!master || shortageQty > 0 || !location) {
+      await db.sql`
+        INSERT INTO shipment_exceptions
+          (shipment_id, shipment_item_id, product_master_id, product_id, item_code, item_name,
+            exception_type, required_qty, available_qty, shortage_qty, note, operator_email)
+        VALUES (${shipment.id}, ${insertedItems[0].id}, ${master?.id || null}, ${Number(item.product_id)},
+          ${master?.item_no || item.sku || String(item.product_id)}, ${item.product_name},
+          ${!master ? "未對應商品" : !location ? "未設定儲位" : "缺貨"},
+          ${Number(item.quantity)}, ${currentStock}, ${!master ? Number(item.quantity) : shortageQty},
+          ${!master ? "請先在總倉庫存建立或對應商品主檔" : !location ? "請先設定商品儲位 QR" : "總倉庫存不足"},
+          ${user.email})`;
+    }
+  }
+  const hasException = await db.sql`SELECT id FROM shipment_exceptions WHERE shipment_id=${shipment.id} AND status='未處理' LIMIT 1`;
+  if (hasException.length) {
+    await db.sql`UPDATE shipment_orders SET status='缺貨異常', updated_at=now() WHERE id=${shipment.id}`;
+  }
+  return json({ ok: true, shipment: await shipmentBundle(shipment.id), existed: false });
+}
+
+async function createPickingOrder(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const shipmentId = body.shipmentId || body.id;
+  if (!shipmentId) return json({ error: "請選擇出貨單" }, 400);
+  const rows = await db.sql`SELECT * FROM shipment_orders WHERE id::text=${String(shipmentId)} OR shipment_no=${String(shipmentId)}`;
+  if (!rows.length) return json({ error: "找不到出貨單" }, 404);
+  const shipment = rows[0];
+  if (shipment.status === "取消") return json({ error: "已取消的出貨單不可產生揀貨單" }, 400);
+  const existing = await db.sql`
+    SELECT id FROM picking_orders
+    WHERE shipment_id=${shipment.id} AND status <> '取消'
+    ORDER BY created_at DESC
+    LIMIT 1`;
+  if (existing.length) return json({ ok: true, shipment: await shipmentBundle(shipment.id), existed: true });
+
+  const items = await db.sql`SELECT * FROM shipment_items WHERE shipment_id=${shipment.id} ORDER BY id`;
+  if (!items.length) return json({ error: "出貨單沒有商品明細" }, 400);
+  const blocking = items.filter(item => item.status === "缺貨" || !item.product_master_id || !item.location_code);
+  if (blocking.length) return json({ error: "此出貨單仍有缺貨、未對應商品或未設定儲位，請先處理異常" }, 400);
+  const pickingNo = docNo("PK");
+  const token = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+  const publicUrl = `${String(body.origin || "").replace(/\/$/, "") || ""}/#picking/${pickingNo}?token=${token}`;
+  const created = await db.sql`
+    INSERT INTO picking_orders
+      (picking_no, shipment_id, source_sales_document_id, qr_code_value, access_token, picker_email, created_by)
+    VALUES (${pickingNo}, ${shipment.id}, ${shipment.source_sales_document_id},
+      ${publicUrl || `PICKING:${pickingNo}`}, ${token}, ${String(body.pickerEmail || "")}, ${user.email})
+    RETURNING *`;
+  const picking = created[0];
+  for (const item of items) {
+    await db.sql`
+      INSERT INTO picking_order_items
+        (picking_order_id, shipment_item_id, product_master_id, product_id, item_code, barcode,
+          item_name, unit, required_qty, location_id, location_code)
+      VALUES (${picking.id}, ${item.id}, ${item.product_master_id}, ${item.product_id}, ${item.item_code},
+        ${item.barcode}, ${item.item_name}, ${item.unit}, ${item.required_qty}, ${item.location_id}, ${item.location_code})`;
+  }
+  await db.sql`
+    UPDATE shipment_orders SET status='待揀貨', picker_email=${String(body.pickerEmail || "")}, updated_at=now()
+    WHERE id=${shipment.id}`;
+  return json({ ok: true, shipment: await shipmentBundle(shipment.id), existed: false });
+}
+
+function normalizeLocationScan(value) {
+  return String(value || "").trim().replace(/^LOCATION:/i, "").replace(/^\/location\//i, "");
+}
+
+async function refreshPickingStatus(pickingId) {
+  const items = await db.sql`SELECT * FROM picking_order_items WHERE picking_order_id=${pickingId}`;
+  const pickingRows = await db.sql`SELECT * FROM picking_orders WHERE id=${pickingId}`;
+  if (!pickingRows.length) return null;
+  const picking = pickingRows[0];
+  const total = items.length;
+  const done = items.filter(item => item.status === "已揀貨").length;
+  const shortage = items.some(item => item.status === "缺貨");
+  const pickedAny = items.some(item => Number(item.picked_qty) > 0);
+  const nextPickingStatus = shortage ? "缺貨異常" : done === total ? "已完成" : pickedAny ? "部分完成" : "揀貨中";
+  const nextShipmentStatus = shortage ? "缺貨異常" : done === total ? "待包裝" : "揀貨中";
+  await db.sql`
+    UPDATE picking_orders SET status=${nextPickingStatus},
+      started_at=CASE WHEN started_at IS NULL AND ${pickedAny} THEN now() ELSE started_at END,
+      completed_at=CASE WHEN ${nextPickingStatus}='已完成' AND completed_at IS NULL THEN now() ELSE completed_at END,
+      updated_at=now()
+    WHERE id=${picking.id}`;
+  await db.sql`
+    UPDATE shipment_orders SET status=${nextShipmentStatus},
+      picked_at=CASE WHEN ${nextShipmentStatus}='待包裝' AND picked_at IS NULL THEN now() ELSE picked_at END,
+      updated_at=now()
+    WHERE id=${picking.shipment_id}`;
+  return nextPickingStatus;
+}
+
+async function pickShipmentItem(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const itemId = body.pickingItemId || body.itemId;
+  if (!itemId) return json({ error: "請選擇揀貨品項" }, 400);
+  const rows = await db.sql`
+    SELECT pi.*, po.picking_no, po.status AS picking_status, po.shipment_id, so.shipment_no, so.source_warehouse
+    FROM picking_order_items pi
+    JOIN picking_orders po ON po.id=pi.picking_order_id
+    JOIN shipment_orders so ON so.id=po.shipment_id
+    WHERE pi.id=${itemId}`;
+  if (!rows.length) return json({ error: "找不到揀貨品項" }, 404);
+  const item = rows[0];
+  if (!["待揀貨", "揀貨中", "部分完成"].includes(item.picking_status)) return json({ error: "此揀貨單目前不可揀貨" }, 400);
+  if (item.inventory_applied_at) return json({ error: "此品項已完成扣庫存，避免重複扣庫存" }, 400);
+  const scannedLocation = normalizeLocationScan(body.locationScan || body.scannedLocation);
+  if (!scannedLocation || scannedLocation !== item.location_code) {
+    return json({ error: `儲位 QR 不正確，應掃描 ${item.location_code}` }, 400);
+  }
+  const qty = Math.floor(Number(body.quantity || body.pickedQty || item.required_qty));
+  if (!Number.isFinite(qty) || qty <= 0) return json({ error: "實際揀貨數量必須大於 0" }, 400);
+  if (qty > Number(item.required_qty)) return json({ error: "實際揀貨數量不可大於需求數量" }, 400);
+  const product = await warehouseProductStock(item.product_master_id);
+  if (!product) return json({ error: "找不到總倉商品主檔" }, 404);
+  const before = Number(product.current_stock || 0);
+  if (qty > before) return json({ error: `總倉庫存不足，目前只有 ${before} 件` }, 400);
+  const after = before - qty;
+  await db.sql`
+    INSERT INTO warehouse_movements
+      (warehouse_name, dealer_id, product_id, product_master_id, movement_type, quantity,
+        source_type, source_id, idempotency_key, operator_email, note, movement_before, movement_after, reason)
+    VALUES (${item.source_warehouse || "東瑭主倉"}, NULL, ${item.product_id}, ${item.product_master_id},
+      '揀貨出庫', ${-qty}, 'picking_order', ${item.picking_no},
+      ${`picking:${item.picking_order_id}:${item.id}:warehouse-out`}, ${user.email},
+      ${`出貨單 ${item.shipment_no}，儲位 ${item.location_code}`}, ${before}, ${after}, '出貨揀貨扣庫存')
+    ON CONFLICT (idempotency_key) DO NOTHING`;
+  await db.sql`
+    UPDATE picking_order_items SET picked_qty=${qty}, scanned_location=${body.locationScan || item.location_code},
+      status='已揀貨', picked_by=${user.email}, picked_at=now(), inventory_applied_at=now(), updated_at=now()
+    WHERE id=${item.id}`;
+  await db.sql`
+    UPDATE shipment_items SET picked_qty=${qty}, status='已揀貨', updated_at=now()
+    WHERE id=${item.shipment_item_id}`;
+  await refreshPickingStatus(item.picking_order_id);
+  return json({ ok: true, shipment: await shipmentBundle(item.shipment_id) });
+}
+
+async function markShipmentShortage(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const itemId = body.pickingItemId || body.shipmentItemId || body.itemId;
+  const rows = await db.sql`
+    SELECT si.*, so.id AS shipment_id, so.shipment_no, po.id AS picking_order_id, po.picking_no
+    FROM shipment_items si
+    JOIN shipment_orders so ON so.id=si.shipment_id
+    LEFT JOIN picking_order_items pi ON pi.shipment_item_id=si.id
+    LEFT JOIN picking_orders po ON po.id=pi.picking_order_id
+    WHERE si.id=${itemId} OR pi.id=${itemId}
+    LIMIT 1`;
+  if (!rows.length) return json({ error: "找不到品項" }, 404);
+  const item = rows[0];
+  const shortageQty = Math.max(1, Math.floor(Number(body.shortageQty || item.required_qty - item.picked_qty || 1)));
+  const product = item.product_master_id ? await warehouseProductStock(item.product_master_id) : null;
+  await db.sql`
+    UPDATE shipment_items SET status='缺貨', shortage_qty=${shortageQty}, note=${String(body.note || "缺貨異常")},
+      updated_at=now()
+    WHERE id=${item.id}`;
+  if (item.picking_order_id) {
+    await db.sql`UPDATE picking_order_items SET status='缺貨', note=${String(body.note || "缺貨異常")}, updated_at=now() WHERE shipment_item_id=${item.id}`;
+  }
+  await db.sql`
+    INSERT INTO shipment_exceptions
+      (shipment_id, picking_order_id, shipment_item_id, product_master_id, product_id, item_code,
+        item_name, exception_type, required_qty, available_qty, shortage_qty, note, operator_email)
+    VALUES (${item.shipment_id}, ${item.picking_order_id || null}, ${item.id}, ${item.product_master_id || null},
+      ${item.product_id}, ${item.item_code}, ${item.item_name}, '缺貨', ${item.required_qty},
+      ${Number(product?.current_stock || 0)}, ${shortageQty}, ${String(body.note || "人工標記缺貨")},
+      ${user.email})`;
+  await db.sql`UPDATE shipment_orders SET status='缺貨異常', updated_at=now() WHERE id=${item.shipment_id}`;
+  if (item.picking_order_id) await refreshPickingStatus(item.picking_order_id);
+  return json({ ok: true, shipment: await shipmentBundle(item.shipment_id) });
+}
+
+async function completePacking(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const shipmentId = body.shipmentId || body.id;
+  const rows = await db.sql`SELECT * FROM shipment_orders WHERE id::text=${String(shipmentId)} OR shipment_no=${String(shipmentId)}`;
+  if (!rows.length) return json({ error: "找不到出貨單" }, 404);
+  const shipment = rows[0];
+  const openItems = await db.sql`
+    SELECT id FROM shipment_items
+    WHERE shipment_id=${shipment.id} AND status NOT IN ('已揀貨', '已包裝', '已出貨')
+    LIMIT 1`;
+  if (openItems.length) return json({ error: "仍有未完成揀貨或缺貨品項，無法包裝覆核" }, 400);
+  await db.sql`
+    UPDATE shipment_items SET status='已包裝', packed_qty=picked_qty, updated_at=now()
+    WHERE shipment_id=${shipment.id} AND status='已揀貨'`;
+  await db.sql`
+    UPDATE picking_order_items SET status='已包裝', updated_at=now()
+    WHERE picking_order_id IN (SELECT id FROM picking_orders WHERE shipment_id=${shipment.id}) AND status='已揀貨'`;
+  await db.sql`
+    UPDATE shipment_orders SET status='待出貨', packer_email=${user.email}, packed_at=now(), updated_at=now()
+    WHERE id=${shipment.id}`;
+  return json({ ok: true, shipment: await shipmentBundle(shipment.id) });
+}
+
+async function completeShipment(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const shipmentId = body.shipmentId || body.id;
+  const rows = await db.sql`SELECT * FROM shipment_orders WHERE id::text=${String(shipmentId)} OR shipment_no=${String(shipmentId)}`;
+  if (!rows.length) return json({ error: "找不到出貨單" }, 404);
+  const shipment = rows[0];
+  if (!["待出貨", "待包裝", "包裝中"].includes(shipment.status)) return json({ error: "此出貨單狀態不可完成出貨" }, 400);
+  const unPacked = await db.sql`
+    SELECT id FROM shipment_items
+    WHERE shipment_id=${shipment.id} AND status <> '已包裝'
+    LIMIT 1`;
+  if (unPacked.length) return json({ error: "請先完成包裝覆核" }, 400);
+  await db.sql`UPDATE shipment_items SET status='已出貨', updated_at=now() WHERE shipment_id=${shipment.id}`;
+  await db.sql`
+    UPDATE shipment_orders SET status='已出貨', tracking_no=${String(body.trackingNo || "")},
+      shipping_method=${String(body.shippingMethod || "")}, shipped_at=now(), updated_at=now()
+    WHERE id=${shipment.id}`;
+  return json({ ok: true, shipment: await shipmentBundle(shipment.id) });
+}
+
+async function saveWarehouseLocation(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const location = body.location || body;
+  const code = String(location.locationCode || location.location_code || "").trim();
+  if (!code) return json({ error: "請輸入儲位代碼" }, 400);
+  const rows = await db.sql`
+    INSERT INTO warehouse_locations
+      (location_code, warehouse_name, area, rack, level_name, slot_name, qr_code_value,
+        product_master_id, light_controller, light_channel, led_start, led_end, is_active, updated_at)
+    VALUES (${code}, ${String(location.warehouseName || "東瑭主倉")}, ${String(location.area || "")},
+      ${String(location.rack || "")}, ${String(location.levelName || "")}, ${String(location.slotName || "")},
+      ${String(location.qrCodeValue || `LOCATION:${code}`)}, ${location.productMasterId || null},
+      ${String(location.lightController || "")}, ${String(location.lightChannel || "")},
+      ${Number(location.ledStart || 0)}, ${Number(location.ledEnd || 0)}, ${location.isActive !== false}, now())
+    ON CONFLICT (location_code) DO UPDATE SET warehouse_name=EXCLUDED.warehouse_name,
+      area=EXCLUDED.area, rack=EXCLUDED.rack, level_name=EXCLUDED.level_name, slot_name=EXCLUDED.slot_name,
+      qr_code_value=EXCLUDED.qr_code_value, product_master_id=EXCLUDED.product_master_id,
+      light_controller=EXCLUDED.light_controller, light_channel=EXCLUDED.light_channel,
+      led_start=EXCLUDED.led_start, led_end=EXCLUDED.led_end, is_active=EXCLUDED.is_active,
+      updated_at=now()
+    RETURNING *`;
+  return json({ ok: true, location: rows[0] });
+}
+
+async function shipmentAction(user, body, req) {
+  const action = body.action || req.query?.action || "";
+  if (action === "createShipmentFromSales") return createShipmentFromSales(user, body);
+  if (action === "createPickingOrder") return createPickingOrder(user, body);
+  if (action === "pickItem") return pickShipmentItem(user, body);
+  if (action === "markShortage") return markShipmentShortage(user, body);
+  if (action === "completePacking") return completePacking(user, body);
+  if (action === "completeShipment") return completeShipment(user, body);
+  if (action === "saveLocation") return saveWarehouseLocation(user, body);
+  return json({ error: "不支援的出貨管理動作" }, 400);
 }
 
 async function currentDealerStock(dealerId, productId) {
@@ -1186,16 +1615,16 @@ async function getWooCommerceSettings(user) {
 async function saveWooCommerceSettings(user, body) {
   if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
   const { url, consumerKey, consumerSecret } = body;
-  
+
   // Fetch existing to handle masked values
   const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
   const existing = rows[0]?.value || {};
-  
+
   const finalKey = consumerKey && !consumerKey.includes('*') ? consumerKey : existing.consumerKey;
   const finalSecret = consumerSecret && !consumerSecret.includes('*') ? consumerSecret : existing.consumerSecret;
-  
+
   const newValue = { url: url || existing.url, consumerKey: finalKey, consumerSecret: finalSecret };
-  
+
   await db.sql`
     INSERT INTO app_settings (key, value) VALUES ('woocommerce', ${JSON.stringify(newValue)}::jsonb)
     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()
@@ -1277,7 +1706,7 @@ async function syncWooCommerceProducts(user) {
 
   const rows = await db.sql`SELECT value FROM app_settings WHERE key = 'woocommerce'`;
   const settings = rows[0]?.value;
-  
+
   if (!settings || !settings.url) {
     // Fallback to the old hardcoded public API if not configured, or return empty
     const fallbackUrl = "https://eavo.com.tw/wp-json/wc/store/v1/products?per_page=100";
@@ -1296,7 +1725,7 @@ async function syncWooCommerceProducts(user) {
   let baseUrl = settings.url.replace(/\/$/, "");
   // WooCommerce REST API v3 path
   const apiPath = `${baseUrl}/wp-json/wc/v3/products?per_page=100`;
-  
+
   try {
     const authHeader = 'Basic ' + Buffer.from(`${settings.consumerKey}:${settings.consumerSecret}`).toString('base64');
     const data = await fetchAllWooPages(apiPath, {
@@ -1382,7 +1811,7 @@ export default async function handler(req) {
     const route = req.params?.route || req.query?.route || "bootstrap";
     const body = req.method === "GET" ? {} : req.body;
     const action = body.action || req.query?.action || route;
-    
+
     // Some routes are public
     if (req.method === "GET" && route === "products") {
       return fetchWooCommerceProducts(req.user || null, req); // Public access with optional admin view
@@ -1390,7 +1819,7 @@ export default async function handler(req) {
 
     const user = await auth(req);
     if (!user) return json({ error: "Unauthorized" }, 401);
-    
+
     console.info("API request", { method: req.method, route, action, userId: user.id });
     if (req.method === "GET" && route === "bootstrap") return json(await bootstrap(user));
     if (req.method === "GET" && route === "settings" && action === "woocommerce") return getWooCommerceSettings(user);
@@ -1399,6 +1828,8 @@ export default async function handler(req) {
     if (req.method === "POST" && route === "master-products") return productMasterAction(user, body);
     if (req.method === "GET" && route === "warehouse-inventory") return listWarehouseInventory(user);
     if (req.method === "POST" && route === "warehouse-inventory") return warehouseInventoryAction(user, body);
+    if (req.method === "GET" && route === "shipments") return listShipments(user);
+    if (req.method === "POST" && route === "shipments") return shipmentAction(user, body, req);
     if (req.method === "POST" && route === "products" && action === "sync") return syncWooCommerceProducts(user);
     if (req.method === "POST" && route === "products" && action === "update") return updateWooCommerceProduct(user, body);
     if (req.method === "POST" && route === "orders") return createOrder(user, body);

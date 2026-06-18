@@ -676,8 +676,31 @@
 .sales-row-actions button{border:1px solid var(--green);background:#fff;padding:7px;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px}
 .sales-row-actions svg{width:14px}
 
+.shipment-admin{display:grid;gap:16px}
+.shipment-hero{background:#fff;border:1px solid var(--line);padding:24px;display:flex;align-items:center;justify-content:space-between;gap:18px}
+.shipment-hero h2{font-family:"Shippori Mincho";font-size:34px;margin:5px 0}.shipment-hero p{margin:0;color:#737d79;line-height:1.7;max-width:820px}
+.shipment-hero .outline,.shipment-actions .outline,.shipment-detail-head .outline,.picking-item .outline{border:1px solid var(--green);background:#fff;color:var(--green);font-weight:800;padding:11px 15px;display:flex;align-items:center;justify-content:center;gap:8px;margin:0}
+.shipment-hero svg,.shipment-actions svg,.shipment-detail-head svg,.picking-item svg{width:16px}
+.shipment-message{padding:12px 14px;border-left:4px solid #257357;background:#e8f3ee;color:#257357;font-weight:800}.shipment-message.error{border-left-color:#c5522d;background:#fff0e8;color:#a74323}
+.shipment-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.shipment-kpis button{border:1px solid var(--line);background:#fff;text-align:left;padding:16px;display:grid;gap:6px;color:var(--green)}
+.shipment-kpis button.active,.shipment-kpis button:hover{border-color:var(--green);box-shadow:inset 0 -3px 0 var(--orange)}
+.shipment-kpis svg{color:var(--orange)}.shipment-kpis span{font-size:11px;color:#727c78;font-weight:800}.shipment-kpis strong{font-family:"Shippori Mincho";font-size:30px}
+.shipment-card,.shipment-detail,.shipment-list{background:#fff;border:1px solid var(--line)}
+.shipment-card{padding:18px}.shipment-card-title{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:14px}
+.shipment-card-title h3,.shipment-detail-head h3{font-family:"Shippori Mincho";font-size:28px;margin:0 0 5px}.shipment-card-title p,.shipment-detail-head p{margin:0;color:#737d79;line-height:1.6}
+.shipment-table{display:grid}.shipment-table-head,.shipment-row{display:grid;gap:10px;align-items:center}.pending-sales .shipment-table-head,.pending-sales .shipment-row{grid-template-columns:150px minmax(220px,1fr) 120px 80px 110px 130px}.exceptions .shipment-table-head,.exceptions .shipment-row{grid-template-columns:160px minmax(260px,1fr) 120px 140px 90px}
+.shipment-table-head{background:#efeee8;color:#68716d;font-size:12px;font-weight:800;padding:11px}.shipment-row{border-bottom:1px solid var(--line);padding:12px}.shipment-row strong{color:var(--green)}.shipment-row small{color:#7f8884}.shipment-row b{font-family:"Shippori Mincho";font-size:18px}.shipment-row .primary,.location-form .primary{padding:10px 14px;margin:0}
+.shipment-layout{display:grid;grid-template-columns:360px minmax(0,1fr);gap:16px;align-items:start}
+.shipment-list{max-height:720px;overflow:auto}.shipment-list .shipment-card-title{padding:16px;margin:0}.shipment-list button{width:100%;border:0;border-top:1px solid var(--line);background:#fff;text-align:left;padding:14px;display:flex;justify-content:space-between;gap:12px;align-items:center}.shipment-list button.active{background:#173b35;color:#fff}.shipment-list small{display:block;margin-top:4px;color:#89928e}.shipment-list button.active small{color:#c8d7d2}.shipment-list b{font-size:11px;background:#f2f1eb;color:var(--green);padding:6px 8px;white-space:nowrap}.shipment-list button.active b{background:#fff;color:var(--green)}
+.shipment-detail{padding:20px;display:grid;gap:16px}.shipment-detail-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}.shipment-detail-head>b{font-family:"Shippori Mincho";font-size:40px;color:var(--orange)}.shipment-actions{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}.shipment-actions button:disabled,.picking-item button:disabled,.shipment-complete button:disabled{opacity:.45;cursor:not-allowed}
+.shipment-items{border:1px solid var(--line)}.shipment-item{display:grid;grid-template-columns:110px minmax(240px,1fr) 130px 70px 70px 90px;gap:8px;align-items:center;border-top:1px solid var(--line);padding:10px}.shipment-item.head{border-top:0;background:#efeee8;color:#68716d;font-size:12px;font-weight:800}.shipment-item strong{color:var(--green)}.shipment-item b{font-family:"Shippori Mincho";font-size:20px}.shipment-item em{font-style:normal;font-size:12px;font-weight:800;color:#d05b32}
+.shipment-complete{display:grid;grid-template-columns:1fr 180px;gap:10px;background:#fbfaf6;border:1px solid var(--line);padding:14px}.shipment-complete input,.picking-item input,.location-form input{border:1px solid #d5d2cb;background:#fff;padding:12px;width:100%}
+.picking-items{display:grid;gap:10px}.picking-item{display:grid;grid-template-columns:minmax(240px,1fr) minmax(220px,1fr) 90px 130px 80px;gap:10px;align-items:center;border:1px solid var(--line);padding:12px}.picking-item.done{background:#edf6f1;border-color:#bddbcc}.picking-item.error{background:#fff0e8;border-color:#edc0a8}.picking-item strong,.picking-item small{display:block}.picking-item small{color:#7b8581;margin-top:4px}.picking-item.done button,.picking-item.done input{opacity:.5}
+.location-form{display:grid;grid-template-columns:2fr 1fr 1fr 130px;gap:10px;margin-bottom:14px}.location-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.location-grid div{border:1px solid var(--line);padding:12px;background:#fbfaf6}.location-grid strong,.location-grid small,.location-grid span{display:block}.location-grid strong{font-family:"Shippori Mincho";font-size:20px}.location-grid small{color:#73807c;margin:5px 0;font-size:11px;word-break:break-all}.location-grid span{font-size:12px;color:#53605c}
+
 @media(max-width:850px){
-  .partner-action-grid,.dashboard-cards,.dashboard-panels,.document-kpis,.consignment-kpis,.warehouse-layout,.warehouse-bottom-grid,.warehouse-missing-list{grid-template-columns:1fr}
+  .partner-action-grid,.dashboard-cards,.dashboard-panels,.document-kpis,.consignment-kpis,.warehouse-layout,.warehouse-bottom-grid,.warehouse-missing-list,.shipment-kpis,.shipment-layout,.shipment-actions,.location-form,.location-grid{grid-template-columns:1fr}
   .dashboard-hero{display:block}
   .dashboard-hero h2{font-size:28px}
   .admin-menu{overflow:auto;align-items:stretch}
@@ -692,4 +715,7 @@
   .warehouse-table-head,.warehouse-product-row{grid-template-columns:70px minmax(160px,1.5fr) minmax(96px,.8fr) 56px 56px 56px;gap:5px;font-size:11px}
   .warehouse-product-row span:nth-child(4),.warehouse-product-row span:nth-child(5),.warehouse-product-row span:nth-child(6){font-size:17px}
   .warehouse-movement-row{grid-template-columns:1fr}
+  .shipment-hero,.shipment-card-title,.shipment-detail-head{display:block}
+  .pending-sales .shipment-table-head,.pending-sales .shipment-row,.exceptions .shipment-table-head,.exceptions .shipment-row,.shipment-item,.picking-item,.shipment-complete{grid-template-columns:1fr}
+  .shipment-table-head{display:none}
 }

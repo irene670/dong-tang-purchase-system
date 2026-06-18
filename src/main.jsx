@@ -9,7 +9,7 @@ import {
   PackageCheck, Truck, ClipboardCheck, FileDown, LogOut, UserRound,
   RefreshCw, CheckCircle2, Clock3, Menu, Megaphone, Store, CalendarDays,
   LayoutDashboard, Save, Image, Settings, Database
-  , Warehouse, FileText, History, SlidersHorizontal, Upload
+  , Warehouse, FileText, History, SlidersHorizontal, Upload, QrCode, AlertTriangle, Package, MapPin
 } from "lucide-react";
 import { calculatePricing, normalizePricingSettings, pricingDescription } from "../shared/pricing.mjs";
 import "./styles.css";
@@ -2261,6 +2261,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
         <span>營運處理</span>
         <button className={tab === "orders" ? "active" : ""} onClick={() => goTab("orders")}><ClipboardCheck /> 採購單處理</button>
         <button className={tab === "transfers" ? "active" : ""} onClick={() => goTab("transfers")}><Truck /> 調撥／倉儲</button>
+        <button className={tab === "shipments" ? "active" : ""} onClick={() => goTab("shipments")}><PackageCheck /> 出貨管理</button>
         <button className={tab === "reports" ? "active" : ""} onClick={() => goTab("reports")}><ClipboardCheck /> 寄售回報審核</button>
         <button className={tab === "sales" ? "active" : ""} onClick={() => goTab("sales")}><FileText /> 銷貨單</button>
         <button className={tab === "import" ? "active" : ""} onClick={() => goTab("import")}><Upload /> Excel 正式銷貨單</button>
@@ -2291,10 +2292,230 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "shipments" ? <ShipmentManager api={api} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
+}
+
+function ShipmentManager({ api }) {
+  const [data, setData] = useState({ pendingSales: [], shipments: [], exceptions: [], locations: [] });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [tab, setTab] = useState("pending");
+  const [selectedShipmentId, setSelectedShipmentId] = useState("");
+  const [selectedPickingId, setSelectedPickingId] = useState("");
+  const [scanDraft, setScanDraft] = useState({});
+  const [trackingNo, setTrackingNo] = useState("");
+  const [message, setMessage] = useState("");
+  const [locationDraft, setLocationDraft] = useState({ locationCode: "", area: "", rack: "", levelName: "", slotName: "" });
+
+  async function load() {
+    setLoading(true);
+    try {
+      const result = await api("shipments");
+      setData(result);
+      const firstShipment = result.shipments?.[0];
+      setSelectedShipmentId(current => current || firstShipment?.id || "");
+      const firstPicking = result.shipments?.flatMap(s => s.pickings || [])?.[0];
+      setSelectedPickingId(current => current || firstPicking?.id || "");
+    } catch (error) {
+      setMessage(error.message || "出貨資料讀取失敗");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { load(); }, []);
+
+  async function act(payload, successText) {
+    if (saving) return;
+    setSaving(true);
+    setMessage("");
+    try {
+      await api("shipments", { method: "POST", body: JSON.stringify(payload) });
+      setMessage(successText || "作業已完成");
+      await load();
+    } catch (error) {
+      setMessage(error.message || "作業失敗");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const shipments = data.shipments || [];
+  const pendingSales = data.pendingSales || [];
+  const pickings = shipments.flatMap(shipment => (shipment.pickings || []).map(picking => ({ ...picking, shipment })));
+  const selectedShipment = shipments.find(row => row.id === selectedShipmentId) || shipments[0];
+  const selectedPicking = pickings.find(row => row.id === selectedPickingId) || pickings[0];
+  const kpis = {
+    pending: pendingSales.length,
+    picking: shipments.filter(row => ["待揀貨", "揀貨中"].includes(row.status)).length,
+    packing: shipments.filter(row => ["待包裝", "包裝中", "待出貨"].includes(row.status)).length,
+    exceptions: (data.exceptions || []).filter(row => row.status === "未處理").length,
+    shipped: shipments.filter(row => row.status === "已出貨").length
+  };
+
+  function printPicking(picking) {
+    if (!picking) return;
+    const shipment = picking.shipment || shipments.find(row => row.id === picking.shipment_id) || {};
+    const qrData = encodeURIComponent(picking.qr_code_value || `${window.location.origin}/#picking/${picking.picking_no}?token=${picking.access_token || ""}`);
+    const rows = (picking.items || []).map(item => `<tr>
+      <td>${escapeHtml(item.location_code || "")}</td>
+      <td class="mono">${escapeHtml(item.item_code || "")}</td>
+      <td>${barcodeSvg(item.barcode || item.item_code || "")}</td>
+      <td>${escapeHtml(item.item_name || "")}</td>
+      <td>${escapeHtml(item.unit || "pcs")}</td>
+      <td class="num">${Number(item.required_qty || 0).toLocaleString("zh-TW")}</td>
+      <td></td>
+    </tr>`).join("");
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(picking.picking_no)}</title><style>
+      *{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",Arial,sans-serif;margin:22px;color:#111}
+      .head{display:grid;grid-template-columns:1fr 150px;gap:20px;border-bottom:3px solid #111;padding-bottom:12px}
+      h1{font-family:serif;font-size:32px;margin:0 0 6px}.meta{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0}.meta div{border:1px solid #111;padding:8px}
+      .qr{text-align:center}.qr img{width:138px;height:138px}.qr small{display:block;word-break:break-all;font-size:9px}
+      table{width:100%;border-collapse:collapse;margin-top:10px}th,td{border:1px solid #111;padding:8px;font-size:12px;vertical-align:middle}th{background:#eee}.num{text-align:right;font-weight:800}.mono{font-family:ui-monospace,Menlo,monospace;font-weight:800}
+      .barcode{display:block;width:130px;height:30px;fill:#111}.sign{display:grid;grid-template-columns:repeat(4,1fr);gap:28px;margin-top:38px}.sign div{border-top:1px solid #111;text-align:center;padding-top:8px}
+      @media print{body{margin:10mm}}
+    </style></head><body>
+      <div class="head"><div><h1>東瑭國際有限公司<br/>揀貨單</h1><p>請依儲位掃描 QR Code，確認品項與數量後再扣總倉庫存。</p></div><div class="qr"><img src="https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${qrData}" /><small>${escapeHtml(picking.qr_code_value || "")}</small></div></div>
+      <div class="meta"><div><b>揀貨單號</b><br/>${escapeHtml(picking.picking_no)}</div><div><b>出貨單號</b><br/>${escapeHtml(shipment.shipment_no || "")}</div><div><b>客戶</b><br/>${escapeHtml(shipment.customer_name || shipment.company_name || "")}</div></div>
+      <table><thead><tr><th>儲位</th><th>品號</th><th>條碼</th><th>品名</th><th>單位</th><th>需求數量</th><th>實揀確認</th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="sign"><div>揀貨</div><div>覆核</div><div>包裝</div><div>主管</div></div>
+      <script>window.onload=function(){window.print()}</script>
+    </body></html>`;
+    const win = window.open("", "_blank", "width=1100,height=800");
+    if (!win) return window.alert("瀏覽器阻擋了列印視窗，請允許此網站開啟彈出式視窗後再試一次。");
+    win.document.write(html);
+    win.document.close();
+  }
+
+  function pickItem(item) {
+    const draft = scanDraft[item.id] || {};
+    act({
+      action: "pickItem",
+      pickingItemId: item.id,
+      locationScan: draft.locationScan || "",
+      quantity: draft.quantity || item.required_qty
+    }, "已完成揀貨並扣除總倉庫存");
+  }
+
+  if (loading) return <div className="loading"><RefreshCw /> 正在讀取出貨管理資料...</div>;
+
+  return <section className="shipment-admin">
+    <div className="shipment-hero">
+      <div><span className="eyebrow">SHIPPING CONTROL</span><h2>出貨管理</h2><p>從銷貨單轉出貨單，產生揀貨單，掃描儲位確認後扣總倉庫存，再完成包裝覆核與出貨。</p></div>
+      <button className="outline" onClick={load} disabled={saving}><RefreshCw /> 重新整理</button>
+    </div>
+    {message && <div className={`shipment-message ${message.includes("失敗") || message.includes("不足") || message.includes("不") ? "error" : "success"}`}>{message}</div>}
+    <div className="shipment-kpis">
+      <button onClick={() => setTab("pending")} className={tab === "pending" ? "active" : ""}><FileText /><span>待轉出貨</span><strong>{kpis.pending}</strong></button>
+      <button onClick={() => setTab("shipments")} className={tab === "shipments" ? "active" : ""}><Package /><span>出貨單</span><strong>{shipments.length}</strong></button>
+      <button onClick={() => setTab("pickings")} className={tab === "pickings" ? "active" : ""}><QrCode /><span>揀貨中</span><strong>{kpis.picking}</strong></button>
+      <button onClick={() => setTab("exceptions")} className={tab === "exceptions" ? "active" : ""}><AlertTriangle /><span>缺貨異常</span><strong>{kpis.exceptions}</strong></button>
+      <button onClick={() => setTab("locations")} className={tab === "locations" ? "active" : ""}><MapPin /><span>儲位 QR</span><strong>{data.locations?.length || 0}</strong></button>
+    </div>
+
+    {tab === "pending" && <div className="shipment-card">
+      <div className="shipment-card-title"><h3>銷貨單轉出貨單</h3><p>銷貨單轉出貨後，系統會比對總倉商品與庫存，不足或未設定儲位會列為異常。</p></div>
+      <div className="shipment-table pending-sales">
+        <div className="shipment-table-head"><span>銷貨單</span><span>客戶</span><span>日期</span><span>品項</span><span>金額</span><span>操作</span></div>
+        {pendingSales.length ? pendingSales.map(row => <div className="shipment-row" key={row.id}>
+          <strong>{row.sales_no}</strong><span>{row.company_name}</span><span>{String(row.sales_date).slice(0, 10)}</span><span>{row.item_count} 項</span><b>{money(row.estimated_total || row.total_amount || 0)}</b>
+          <button className="primary" disabled={saving} onClick={() => act({ action: "createShipmentFromSales", salesDocumentId: row.id }, "已建立出貨單")}>轉出貨單</button>
+        </div>) : <div className="document-empty compact">目前沒有待轉出貨的銷貨單。</div>}
+      </div>
+    </div>}
+
+    {tab === "shipments" && <div className="shipment-layout">
+      <div className="shipment-list">
+        <div className="shipment-card-title"><h3>出貨單列表</h3><p>選擇出貨單後，可產生揀貨單、查看品項、包裝覆核與完成出貨。</p></div>
+        {shipments.map(row => <button key={row.id} className={selectedShipment?.id === row.id ? "active" : ""} onClick={() => setSelectedShipmentId(row.id)}>
+          <span><strong>{row.shipment_no}</strong><small>{row.customer_name || row.company_name} · {new Date(row.created_at).toLocaleDateString("zh-TW")}</small></span><b>{row.status}</b>
+        </button>)}
+      </div>
+      <ShipmentDetail shipment={selectedShipment} saving={saving} trackingNo={trackingNo} setTrackingNo={setTrackingNo}
+        onCreatePicking={() => act({ action: "createPickingOrder", shipmentId: selectedShipment.id, origin: window.location.origin }, "已產生揀貨單")}
+        onPacking={() => act({ action: "completePacking", shipmentId: selectedShipment.id }, "包裝覆核完成")}
+        onShip={() => act({ action: "completeShipment", shipmentId: selectedShipment.id, trackingNo }, "出貨完成")}
+        onPrint={printPicking} />
+    </div>}
+
+    {tab === "pickings" && <div className="shipment-layout">
+      <div className="shipment-list">
+        <div className="shipment-card-title"><h3>電子揀貨</h3><p>掃描紙本 QR 進入後，依照儲位逐項確認；確認後會立即扣總倉庫存。</p></div>
+        {pickings.map(row => <button key={row.id} className={selectedPicking?.id === row.id ? "active" : ""} onClick={() => setSelectedPickingId(row.id)}>
+          <span><strong>{row.picking_no}</strong><small>{row.shipment?.customer_name || row.shipment?.company_name} · {row.items?.length || 0} 項</small></span><b>{row.status}</b>
+        </button>)}
+      </div>
+      <div className="shipment-detail">
+        {selectedPicking ? <>
+          <div className="shipment-detail-head"><div><span className="eyebrow">E-PICKING</span><h3>{selectedPicking.picking_no}</h3><p>出貨單：{selectedPicking.shipment?.shipment_no}</p></div><button className="outline" onClick={() => printPicking(selectedPicking)}><FileDown /> 列印揀貨單</button></div>
+          <div className="picking-items">
+            {(selectedPicking.items || []).map(item => <div className={`picking-item ${item.status === "已揀貨" ? "done" : item.status === "缺貨" ? "error" : ""}`} key={item.id}>
+              <div><strong>{item.item_name}</strong><small>{item.item_code} · 儲位 {item.location_code || "未設定"} · 需求 {item.required_qty} {item.unit || "pcs"}</small></div>
+              <input placeholder="掃描儲位 QR，例如 LOCATION:A01" value={scanDraft[item.id]?.locationScan || ""} onChange={e => setScanDraft(prev => ({ ...prev, [item.id]: { ...(prev[item.id] || {}), locationScan: e.target.value } }))} disabled={item.status === "已揀貨"} />
+              <input type="number" min="1" max={item.required_qty} value={scanDraft[item.id]?.quantity || item.required_qty} onChange={e => setScanDraft(prev => ({ ...prev, [item.id]: { ...(prev[item.id] || {}), quantity: e.target.value } }))} disabled={item.status === "已揀貨"} />
+              <button className="primary" disabled={saving || item.status === "已揀貨"} onClick={() => pickItem(item)}><CheckCircle2 /> 確認揀貨</button>
+              <button className="outline" disabled={saving || item.status === "已揀貨"} onClick={() => act({ action: "markShortage", pickingItemId: item.id, note: "電子揀貨標記缺貨" }, "已建立缺貨異常")}>缺貨</button>
+            </div>)}
+          </div>
+        </> : <div className="document-empty compact">尚未有揀貨單。</div>}
+      </div>
+    </div>}
+
+    {tab === "exceptions" && <div className="shipment-card">
+      <div className="shipment-card-title"><h3>出貨異常紀錄</h3><p>包含缺貨、未對應總倉商品、未設定儲位等會阻擋揀貨的問題。</p></div>
+      <div className="shipment-table exceptions">
+        <div className="shipment-table-head"><span>單號</span><span>品號 / 品名</span><span>類型</span><span>需求 / 可用 / 缺</span><span>狀態</span></div>
+        {(data.exceptions || []).map(row => <div className="shipment-row" key={row.id}>
+          <strong>{row.shipment_no || row.picking_no}</strong><span>{row.item_code}<br/><small>{row.item_name}</small></span><span>{row.exception_type}</span><span>{row.required_qty} / {row.available_qty} / {row.shortage_qty}</span><b>{row.status}</b>
+        </div>)}
+      </div>
+    </div>}
+
+    {tab === "locations" && <div className="shipment-card">
+      <div className="shipment-card-title"><h3>儲位 QR Code 管理</h3><p>V1 先保留燈控欄位，實際揀貨以掃描儲位 QR 確認為主。</p></div>
+      <div className="location-form">
+        <input placeholder="儲位代碼，例如 A01-02-01" value={locationDraft.locationCode} onChange={e => setLocationDraft({ ...locationDraft, locationCode: e.target.value })} />
+        <input placeholder="區域" value={locationDraft.area} onChange={e => setLocationDraft({ ...locationDraft, area: e.target.value })} />
+        <input placeholder="架位" value={locationDraft.rack} onChange={e => setLocationDraft({ ...locationDraft, rack: e.target.value })} />
+        <button className="primary" onClick={() => act({ action: "saveLocation", location: locationDraft }, "儲位已儲存")} disabled={saving}>儲存儲位</button>
+      </div>
+      <div className="location-grid">
+        {(data.locations || []).map(location => <div key={location.id}>
+          <strong>{location.location_code}</strong><small>{location.qr_code_value}</small><span>{location.product_name || "尚未指定商品"}</span>
+        </div>)}
+      </div>
+    </div>}
+  </section>;
+}
+
+function ShipmentDetail({ shipment, saving, trackingNo, setTrackingNo, onCreatePicking, onPacking, onShip, onPrint }) {
+  if (!shipment) return <div className="shipment-detail"><div className="document-empty compact">請選擇出貨單。</div></div>;
+  const picking = (shipment.pickings || [])[0];
+  const totalQty = (shipment.items || []).reduce((sum, item) => sum + Number(item.required_qty || 0), 0);
+  return <div className="shipment-detail">
+    <div className="shipment-detail-head">
+      <div><span className="eyebrow">SHIPMENT</span><h3>{shipment.shipment_no}</h3><p>{shipment.customer_name || shipment.company_name} · {shipment.status}</p></div>
+      <b>{totalQty} 件</b>
+    </div>
+    <div className="shipment-actions">
+      <button className="primary" disabled={saving || picking || !["待產生揀貨單", "待揀貨"].includes(shipment.status)} onClick={onCreatePicking}><QrCode /> 產生揀貨單</button>
+      <button className="outline" disabled={!picking} onClick={() => onPrint(picking)}><FileDown /> 列印揀貨單</button>
+      <button className="outline" disabled={saving || !["待包裝", "包裝中"].includes(shipment.status)} onClick={onPacking}><PackageCheck /> 包裝覆核</button>
+    </div>
+    <div className="shipment-items">
+      <div className="shipment-item head"><span>品號</span><span>品名</span><span>儲位</span><span>需求</span><span>已揀</span><span>狀態</span></div>
+      {(shipment.items || []).map(item => <div className="shipment-item" key={item.id}>
+        <strong>{item.item_code}</strong><span>{item.item_name}</span><span>{item.location_code || "未設定"}</span><b>{item.required_qty}</b><b>{item.picked_qty}</b><em>{item.status}</em>
+      </div>)}
+    </div>
+    <div className="shipment-complete">
+      <input placeholder="物流單號／備註" value={trackingNo} onChange={e => setTrackingNo(e.target.value)} />
+      <button className="primary" disabled={saving || shipment.status !== "待出貨"} onClick={onShip}><Truck /> 完成出貨</button>
+    </div>
+  </div>;
 }
 
 function OrderManager({ orders, dealers, transfers = [], products = [], focus = {}, onUpdate, onCreateTransfer }) {
