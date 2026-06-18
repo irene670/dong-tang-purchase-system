@@ -291,6 +291,10 @@ function openPrintableDocument({ type, title, number, date, company, sourceWareh
     <script>window.onload=function(){window.print()}</script>
   </body></html>`;
   const win = window.open("", "_blank", "width=1100,height=800");
+  if (!win) {
+    window.alert("瀏覽器阻擋了列印視窗，請允許此網站開啟彈出式視窗後再試一次。");
+    return;
+  }
   win.document.write(html);
   win.document.close();
 }
@@ -2712,6 +2716,28 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
     { key: "已完成", label: "訂單完成", icon: <ClipboardCheck />, note: order.completedAt ? "已完成" : "等待中" }
   ];
   const statusIcon = status => status === "已完成" ? <ClipboardCheck /> : status === "已出貨" ? <Truck /> : status === "備貨中" ? <PackageCheck /> : status === "已取消" ? <Clock3 /> : <Clock3 />;
+  function printPurchaseOrder(order) {
+    openPrintableDocument({
+      type: "purchase",
+      title: "採購單",
+      number: order.id,
+      date: order.date,
+      company: order.company || company,
+      destination: order.shipping,
+      note: order.adminNote,
+      items: order.lineItems.map(item => {
+        const identity = productIdentity(item, productMap);
+        return {
+          ...identity,
+          qty: item.qty,
+          price: item.dealerPrice,
+          amount: item.lineTotal,
+          note: order.shipping?.storeName || ""
+        };
+      }),
+      totals: { preTax: order.preTaxAmount, tax: order.taxAmount, total: order.amount }
+    });
+  }
   function setStockAlert(productId, value) {
     const next = { ...stockAlerts };
     if (value === "") delete next[productId];
@@ -2735,10 +2761,10 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
           return <div className={done ? "done" : active ? "active" : ""} key={step.key}><i>{step.icon}</i><strong>{step.label}</strong><small>{step.note}</small></div>;
         })}
       </div>
-      <div className="order-total"><span>訂單總金額</span><strong>{money(order.amount)}</strong><button onClick={() => window.print()}><FileDown /> 查看／列印採購單</button></div>
+      <div className="order-total"><span>訂單總金額</span><strong>{money(order.amount)}</strong><button onClick={() => printPurchaseOrder(order)}><FileDown /> 查看／列印採購單</button></div>
     </div>
     )}</div> : <div className="document-empty">{orders.length ? "目前沒有進行中的採購單，已完成或取消的單據可至歷史採購查看。" : "目前尚無採購單，請先前往商品採購建立訂單。"}</div>)}
-    {tab === "orders" && <div className="history document-list"><h2>歷史採購紀錄</h2>{orders.map(o => <div className="history-row" key={o.id}><i>{icon(o.status)}</i><div><strong>{o.id}</strong><small>{o.date} · {o.items} 項商品{o.shipping?.storeName && ` · 寄送 ${o.shipping.storeName}`}</small></div><span className={`status ${o.status === "已完成" ? "complete" : ""}`}>{o.status}</span><strong>{money(o.amount)}</strong><button><FileDown /></button></div>)}</div>}
+    {tab === "orders" && <div className="history document-list"><h2>歷史採購紀錄</h2>{orders.map(o => <div className="history-row" key={o.id}><i>{icon(o.status)}</i><div><strong>{o.id}</strong><small>{o.date} · {o.items} 項商品{o.shipping?.storeName && ` · 寄送 ${o.shipping.storeName}`}</small></div><span className={`status ${o.status === "已完成" ? "complete" : ""}`}>{o.status}</span><strong>{money(o.amount)}</strong><button onClick={() => printPurchaseOrder(o)} title="查看／列印採購單"><FileDown /></button></div>)}</div>}
     {tab === "sales" && <div className="customer-sales document-list"><div className="document-list-heading"><div><h2>歷史銷貨紀錄</h2><p>銷貨單由東瑭行政人員建檔與上傳，通路帳號僅能檢視及下載。</p></div><span><CheckCircle2 /> 唯讀專區</span></div>{sales.length === 0 ? <div className="document-empty">目前沒有銷貨單紀錄</div> : sales.map(doc => <article key={doc.id}><div><span className="status">{doc.status}</span><strong>{doc.id}</strong><small>{doc.month} · {doc.items.reduce((s, i) => s + i.qty, 0)} 件</small></div><strong>{money(doc.totalAmount || doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><div className="document-files">{doc.attachment && <a href={doc.attachment} target="_blank"><FileText /> 檢視客戶原版</a>}{doc.formalAttachment && <a href={doc.formalAttachment.startsWith("http") ? doc.formalAttachment : "#"}><FileDown /> 檢視正式銷貨單</a>}<button onClick={() => downloadReconciliation(doc, settings)}><FileDown /> 下載發票對帳明細</button></div></article>)}</div>}
     {tab === "stock" && <div className="customer-stock document-list">
       <div className="customer-stock-title"><div><h2>目前寄售庫存</h2><p>可為每個品項設定提醒水位，低於或等於門檻時會標示為低庫存。</p></div><span>{stockInventoryRows.filter(row => row.low).length} 項需留意</span></div>
