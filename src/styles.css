@@ -297,7 +297,7 @@
 .order-update-panel label span{display:block;font-size:12px;font-weight:800;margin-bottom:6px}
 .order-update-panel input,.order-update-panel textarea,.order-actions select{width:100%;border:1px solid #cfd2cf;background:#fff;padding:11px}
 .order-update-panel textarea{min-height:82px;resize:vertical}
-.order-actions{display:grid;grid-template-columns:150px repeat(4,1fr) 1.3fr;gap:10px;align-items:center}
+.order-actions{display:grid;grid-template-columns:150px repeat(4,1fr) 1.2fr;gap:10px;align-items:center}
 .order-actions .outline,.order-actions .primary{margin:0}
 .order-inventory-note{color:#287157;font-weight:700}
 .order-inventory-note.warning{color:#a54a29}
@@ -693,9 +693,10 @@
 .shipment-kpis button.active,.shipment-kpis button:hover{border-color:var(--green);box-shadow:inset 0 -3px 0 var(--orange)}
 .shipment-kpis svg{color:var(--orange)}.shipment-kpis span{font-size:11px;color:#727c78;font-weight:800}.shipment-kpis strong{font-family:"Shippori Mincho";font-size:30px}
 .shipment-card,.shipment-detail,.shipment-list{background:#fff;border:1px solid var(--line)}
+.shipment-flow-grid{display:grid;gap:14px}
 .shipment-card{padding:18px}.shipment-card-title{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;border-bottom:1px solid var(--line);padding-bottom:14px;margin-bottom:14px}
 .shipment-card-title h3,.shipment-detail-head h3{font-family:"Shippori Mincho";font-size:28px;margin:0 0 5px}.shipment-card-title p,.shipment-detail-head p{margin:0;color:#737d79;line-height:1.6}
-.shipment-table{display:grid}.shipment-table-head,.shipment-row{display:grid;gap:10px;align-items:center}.pending-sales .shipment-table-head,.pending-sales .shipment-row{grid-template-columns:150px minmax(220px,1fr) 120px 80px 110px 130px}.exceptions .shipment-table-head,.exceptions .shipment-row{grid-template-columns:160px minmax(260px,1fr) 120px 140px 90px}
+.shipment-table{display:grid}.shipment-table-head,.shipment-row{display:grid;gap:10px;align-items:center}.pending-orders .shipment-table-head,.pending-orders .shipment-row{grid-template-columns:160px minmax(180px,1fr) 120px 120px 120px 140px}.pending-sales .shipment-table-head,.pending-sales .shipment-row{grid-template-columns:150px 150px minmax(190px,1fr) 80px 110px 130px}.ready-picking .shipment-table-head,.ready-picking .shipment-row{grid-template-columns:170px minmax(220px,1fr) 120px 80px 140px}.exceptions .shipment-table-head,.exceptions .shipment-row{grid-template-columns:160px minmax(260px,1fr) 120px 140px 90px}
 .shipment-table-head{background:#efeee8;color:#68716d;font-size:12px;font-weight:800;padding:11px}.shipment-row{border-bottom:1px solid var(--line);padding:12px}.shipment-row strong{color:var(--green)}.shipment-row small{color:#7f8884}.shipment-row b{font-family:"Shippori Mincho";font-size:18px}.shipment-row .primary,.location-form .primary{padding:10px 14px;margin:0}
 .shipment-layout{display:grid;grid-template-columns:360px minmax(0,1fr);gap:16px;align-items:start}
 .shipment-list{max-height:720px;overflow:auto}.shipment-list .shipment-card-title{padding:16px;margin:0}.shipment-list button{width:100%;border:0;border-top:1px solid var(--line);background:#fff;text-align:left;padding:14px;display:flex;justify-content:space-between;gap:12px;align-items:center}.shipment-list button.active{background:#173b35;color:#fff}.shipment-list small{display:block;margin-top:4px;color:#89928e}.shipment-list button.active small{color:#c8d7d2}.shipment-list b{font-size:11px;background:#f2f1eb;color:var(--green);padding:6px 8px;white-space:nowrap}.shipment-list button.active b{background:#fff;color:var(--green)}
@@ -724,6 +725,6 @@
   .shipment-hero,.shipment-card-title,.shipment-detail-head{display:block}
   .merged-section-head{display:block}
   .merged-tabs{justify-content:flex-start;margin-top:14px}
-  .pending-sales .shipment-table-head,.pending-sales .shipment-row,.exceptions .shipment-table-head,.exceptions .shipment-row,.shipment-item,.picking-item,.shipment-complete{grid-template-columns:1fr}
+  .pending-orders .shipment-table-head,.pending-orders .shipment-row,.pending-sales .shipment-table-head,.pending-sales .shipment-row,.ready-picking .shipment-table-head,.ready-picking .shipment-row,.exceptions .shipment-table-head,.exceptions .shipment-row,.shipment-item,.picking-item,.shipment-complete{grid-template-columns:1fr}
   .shipment-table-head{display:none}
 }

@@ -102,8 +102,18 @@ async function bootstrap(user) {
     ? await db.sql`SELECT * FROM order_items WHERE order_id = ANY(${orderIds}::uuid[]) ORDER BY id`
     : [];
   const sales = isAdmin(user)
-    ? await db.sql`SELECT s.*, d.company_name FROM sales_documents s JOIN dealers d ON d.id=s.dealer_id ORDER BY s.sales_date DESC`
-    : await db.sql`SELECT * FROM sales_documents WHERE dealer_id=${dealer.id} ORDER BY sales_date DESC`;
+    ? await db.sql`
+      SELECT s.*, d.company_name, o.order_no AS source_order_no
+      FROM sales_documents s
+      JOIN dealers d ON d.id=s.dealer_id
+      LEFT JOIN orders o ON o.id=s.source_order_id
+      ORDER BY s.sales_date DESC`
+    : await db.sql`
+      SELECT s.*, o.order_no AS source_order_no
+      FROM sales_documents s
+      LEFT JOIN orders o ON o.id=s.source_order_id
+      WHERE s.dealer_id=${dealer.id}
+      ORDER BY s.sales_date DESC`;
   const salesIds = sales.map(row => row.id);
   const salesItems = salesIds.length
     ? await db.sql`SELECT * FROM sales_document_items WHERE sales_document_id = ANY(${salesIds}::uuid[]) ORDER BY id`
@@ -573,19 +583,33 @@ async function listShipments(user) {
     ORDER BY l.location_code
     LIMIT 500`;
   const pendingSales = await db.sql`
-    SELECT s.*, d.company_name,
+    SELECT s.*, d.company_name, o.order_no AS source_order_no,
       COUNT(i.id)::integer AS item_count,
       COALESCE(SUM(i.quantity * i.unit_price), 0)::integer AS estimated_total
     FROM sales_documents s
     JOIN dealers d ON d.id=s.dealer_id
+    LEFT JOIN orders o ON o.id=s.source_order_id
     LEFT JOIN sales_document_items i ON i.sales_document_id=s.id
     LEFT JOIN shipment_orders sh ON sh.source_sales_document_id=s.id AND sh.status <> '取消'
     WHERE sh.id IS NULL AND s.status <> '已作廢'
-    GROUP BY s.id, d.company_name
+    GROUP BY s.id, d.company_name, o.order_no
     ORDER BY s.sales_date DESC
+    LIMIT 100`;
+  const pendingOrders = await db.sql`
+    SELECT o.*, d.company_name,
+      COUNT(i.id)::integer AS item_count,
+      COALESCE(SUM(i.quantity), 0)::integer AS total_qty
+    FROM orders o
+    JOIN dealers d ON d.id=o.dealer_id
+    LEFT JOIN order_items i ON i.order_id=o.id
+    LEFT JOIN sales_documents s ON s.source_order_id=o.id AND s.status <> '已作廢'
+    WHERE s.id IS NULL AND o.status <> '已取消'
+    GROUP BY o.id, d.company_name
+    ORDER BY o.created_at DESC
     LIMIT 100`;
   return json({
     ok: true,
+    pendingOrders,
     pendingSales,
     shipments: shipments.map(row => ({
       ...row,
@@ -921,6 +945,7 @@ async function saveWarehouseLocation(user, body) {
 
 async function shipmentAction(user, body, req) {
   const action = body.action || req.query?.action || "";
+  if (action === "createSalesFromOrder") return createSalesFromOrder(user, body);
   if (action === "createShipmentFromSales") return createShipmentFromSales(user, body);
   if (action === "createPickingOrder") return createPickingOrder(user, body);
   if (action === "pickItem") return pickShipmentItem(user, body);
@@ -1195,6 +1220,74 @@ async function createOrder(user, body) {
         ${item.preTax}, ${item.tax}, ${item.total})`;
   }
   return json({ ok: true, orderNo, pricing });
+}
+
+async function salesWithItems(salesDocumentId) {
+  const rows = await db.sql`
+    SELECT s.*, d.company_name, o.order_no AS source_order_no
+    FROM sales_documents s
+    JOIN dealers d ON d.id=s.dealer_id
+    LEFT JOIN orders o ON o.id=s.source_order_id
+    WHERE s.id=${salesDocumentId}`;
+  if (!rows.length) return null;
+  const items = await db.sql`SELECT * FROM sales_document_items WHERE sales_document_id=${salesDocumentId} ORDER BY id`;
+  return { ...rows[0], items };
+}
+
+async function createSalesFromOrder(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const orderId = body.orderId || body.id;
+  if (!orderId) return json({ error: "缺少採購單 ID" }, 400);
+
+  const orders = await db.sql`
+    SELECT o.*, d.company_name
+    FROM orders o
+    JOIN dealers d ON d.id=o.dealer_id
+    WHERE o.id::text=${String(orderId)} OR o.order_no=${String(orderId)}`;
+  if (!orders.length) return json({ error: "找不到採購單" }, 404);
+  const order = orders[0];
+  if (order.status === "已取消") return json({ error: "已取消的採購單不可轉銷貨單" }, 400);
+
+  const existing = await db.sql`
+    SELECT id FROM sales_documents
+    WHERE source_order_id=${order.id} AND status <> '已作廢'
+    ORDER BY created_at DESC
+    LIMIT 1`;
+  if (existing.length) {
+    return json({ ok: true, sales: await salesWithItems(existing[0].id), existed: true });
+  }
+
+  const orderItems = await db.sql`SELECT * FROM order_items WHERE order_id=${order.id} ORDER BY id`;
+  if (!orderItems.length) return json({ error: "採購單沒有商品明細" }, 400);
+
+  const salesNo = docNo("SO");
+  const salesDate = new Date().toISOString().slice(0, 10);
+  const salesMonth = salesDate.slice(0, 7);
+  const inserted = await db.sql`
+    INSERT INTO sales_documents
+      (sales_no, dealer_id, source_order_id, sales_month, sales_date, status, note,
+        pricing_snapshot, pre_tax_amount, tax_amount, total_amount)
+    VALUES (${salesNo}, ${order.dealer_id}, ${order.id}, ${salesMonth}, ${salesDate}::date,
+      '已確認', ${`由採購單 ${order.order_no} 轉入`}, ${JSON.stringify(order.pricing_snapshot || {})}::jsonb,
+      ${Number(order.pre_tax_amount || 0)}, ${Number(order.tax_amount || 0)}, ${Number(order.total_amount || 0)})
+    RETURNING *`;
+  const salesDoc = inserted[0];
+
+  for (const item of orderItems) {
+    await db.sql`
+      INSERT INTO sales_document_items
+        (sales_document_id, product_id, sku, product_name, quantity, unit_price)
+      VALUES (${salesDoc.id}, ${Number(item.product_id)}, ${item.sku}, ${item.product_name},
+        ${Number(item.quantity)}, ${Number(item.dealer_price || 0)})`;
+  }
+
+  await db.sql`
+    UPDATE orders SET status=CASE WHEN status='訂單成立' THEN '已確認' ELSE status END,
+      confirmed_at=CASE WHEN confirmed_at IS NULL THEN now() ELSE confirmed_at END,
+      updated_at=now()
+    WHERE id=${order.id}`;
+
+  return json({ ok: true, sales: await salesWithItems(salesDoc.id), existed: false });
 }
 
 async function applyPurchaseInventory(user, order, items) {
@@ -1852,7 +1945,9 @@ export default async function handler(req) {
     if (req.method === "POST" && route === "shipments") return shipmentAction(user, body, req);
     if (req.method === "POST" && route === "products" && action === "sync") return syncWooCommerceProducts(user);
     if (req.method === "POST" && route === "products" && action === "update") return updateWooCommerceProduct(user, body);
-    if (req.method === "POST" && route === "orders") return createOrder(user, body);
+    if (["createSalesFromOrder", "sales-from-order"].includes(action) && req.method === "POST") {
+      return createSalesFromOrder(user, body);
+    }
     if (["createTransferFromOrder", "transfer-from-order"].includes(action) && req.method === "POST") {
       return createTransferFromOrder(user, body);
     }
@@ -1868,6 +1963,7 @@ export default async function handler(req) {
     if (["convertConsignmentSalesReport", "consignment-report-convert"].includes(action) && req.method === "POST") {
       return convertConsignmentReportToSales(user, body);
     }
+    if (req.method === "POST" && route === "orders") return createOrder(user, body);
     if (["updateOrder", "order"].includes(action) && ["POST", "PUT", "PATCH"].includes(req.method)) {
       return updateOrder(user, body);
     }

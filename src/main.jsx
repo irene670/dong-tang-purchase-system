@@ -471,8 +471,11 @@ function App() {
       note: row.note
     }));
     const nextSales = data.sales.map(row => ({
+      uuid: row.id,
       id: row.sales_no,
       company: row.company_name || dealer.company_name,
+      sourceOrderId: row.source_order_id,
+      sourceOrderNo: row.source_order_no,
       month: row.sales_month,
       date: row.sales_date,
       status: row.status,
@@ -811,6 +814,16 @@ function App() {
     return result.transfer;
   }
 
+  async function createSalesFromOrder(orderId) {
+    const result = await api("mutations", {
+      method: "POST",
+      body: JSON.stringify({ action: "createSalesFromOrder", orderId })
+    });
+    await loadAccount({ preserveView: true });
+    notify(result.existed ? `採購單已有銷貨單 ${result.sales.sales_no}` : `已建立銷貨單 ${result.sales.sales_no}`);
+    return result.sales;
+  }
+
   async function updateTransfer(transferId, patch) {
     const result = await api("mutations", {
       method: "POST",
@@ -938,7 +951,8 @@ function App() {
           dealers={dealerRecords} orders={orders} transfers={transfers} warehouseMovements={warehouseMovements}
           movements={movements} sales={sales} consignmentReports={consignmentReports} onSave={saveAdmin}
           onSaveInventory={saveInventory} onCreateDealerAccount={createDealerAccount}
-          onUpdateOrder={updateOrder} onCreateTransfer={createTransferFromOrder} onUpdateTransfer={updateTransfer}
+          onUpdateOrder={updateOrder} onCreateTransfer={createTransferFromOrder} onCreateSalesOrder={createSalesFromOrder} onUpdateTransfer={updateTransfer}
+          onWorkflowRefresh={() => loadAccount({ preserveView: true })}
           onReviewConsignmentReport={reviewConsignmentReport} onConvertConsignmentReport={convertConsignmentReport} />}
 
       {toast && <div className="toast"><CheckCircle2 /> {toast}</div>}
@@ -2233,7 +2247,7 @@ function AdminDashboard({ orders, transfers, reports, sales, movements, products
   </div>;
 }
 
-function AdminPanel({ api, content, products, productEdits, channels, dealers, orders, transfers, warehouseMovements, movements, sales, consignmentReports, onSave, onSaveInventory, onCreateDealerAccount, onUpdateOrder, onCreateTransfer, onUpdateTransfer, onReviewConsignmentReport, onConvertConsignmentReport }) {
+function AdminPanel({ api, content, products, productEdits, channels, dealers, orders, transfers, warehouseMovements, movements, sales, consignmentReports, onSave, onSaveInventory, onCreateDealerAccount, onUpdateOrder, onCreateTransfer, onCreateSalesOrder, onUpdateTransfer, onWorkflowRefresh, onReviewConsignmentReport, onConvertConsignmentReport }) {
   const [tab, setTab] = useState("dashboard");
   const [focus, setFocus] = useState({});
   const [draft, setDraft] = useState(content);
@@ -2291,14 +2305,14 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "admins" ? <AccessOverview dealers={dealers} type="admins" /> : tab === "permissions" ? <AccessOverview dealers={dealers} type="permissions" /> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "shipments" ? <ShipmentManager api={api} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesWorkspace channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "admins" ? <AccessOverview dealers={dealers} type="admins" /> : tab === "permissions" ? <AccessOverview dealers={dealers} type="permissions" /> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} sales={sales} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} onCreateSales={onCreateSalesOrder} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "shipments" ? <ShipmentManager api={api} onWorkflowRefresh={onWorkflowRefresh} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesWorkspace channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
 }
 
-function ShipmentManager({ api }) {
-  const [data, setData] = useState({ pendingSales: [], shipments: [], exceptions: [], locations: [] });
+function ShipmentManager({ api, onWorkflowRefresh }) {
+  const [data, setData] = useState({ pendingOrders: [], pendingSales: [], shipments: [], exceptions: [], locations: [] });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [tab, setTab] = useState("pending");
@@ -2335,6 +2349,7 @@ function ShipmentManager({ api }) {
       await api("shipments", { method: "POST", body: JSON.stringify(payload) });
       setMessage(successText || "作業已完成");
       await load();
+      if (onWorkflowRefresh) await onWorkflowRefresh();
     } catch (error) {
       setMessage(error.message || "作業失敗");
     } finally {
@@ -2343,12 +2358,14 @@ function ShipmentManager({ api }) {
   }
 
   const shipments = data.shipments || [];
+  const pendingOrders = data.pendingOrders || [];
   const pendingSales = data.pendingSales || [];
   const pickings = shipments.flatMap(shipment => (shipment.pickings || []).map(picking => ({ ...picking, shipment })));
+  const readyForPicking = shipments.filter(row => !row.pickings?.length && row.status === "待產生揀貨單");
   const selectedShipment = shipments.find(row => row.id === selectedShipmentId) || shipments[0];
   const selectedPicking = pickings.find(row => row.id === selectedPickingId) || pickings[0];
   const kpis = {
-    pending: pendingSales.length,
+    pending: pendingOrders.length + pendingSales.length + readyForPicking.length,
     picking: shipments.filter(row => ["待揀貨", "揀貨中"].includes(row.status)).length,
     packing: shipments.filter(row => ["待包裝", "包裝中", "待出貨"].includes(row.status)).length,
     exceptions: (data.exceptions || []).filter(row => row.status === "未處理").length,
@@ -2403,26 +2420,48 @@ function ShipmentManager({ api }) {
 
   return <section className="shipment-admin">
     <div className="shipment-hero">
-      <div><span className="eyebrow">SHIPPING CONTROL</span><h2>出貨管理</h2><p>從銷貨單轉出貨單，產生揀貨單，掃描儲位確認後扣總倉庫存，再完成包裝覆核與出貨。</p></div>
+      <div><span className="eyebrow">SHIPPING CONTROL</span><h2>出貨管理</h2><p>依照「採購單 → 銷貨單 → 出貨單 → 揀貨單」處理。每一步完成後，下一步會自動出現在下方待辦區。</p></div>
       <button className="outline" onClick={load} disabled={saving}><RefreshCw /> 重新整理</button>
     </div>
     {message && <div className={`shipment-message ${message.includes("失敗") || message.includes("不足") || message.includes("不") ? "error" : "success"}`}>{message}</div>}
     <div className="shipment-kpis">
-      <button onClick={() => setTab("pending")} className={tab === "pending" ? "active" : ""}><FileText /><span>待轉出貨</span><strong>{kpis.pending}</strong></button>
+      <button onClick={() => setTab("pending")} className={tab === "pending" ? "active" : ""}><FileText /><span>流程待辦</span><strong>{kpis.pending}</strong></button>
       <button onClick={() => setTab("shipments")} className={tab === "shipments" ? "active" : ""}><Package /><span>出貨單</span><strong>{shipments.length}</strong></button>
       <button onClick={() => setTab("pickings")} className={tab === "pickings" ? "active" : ""}><QrCode /><span>揀貨中</span><strong>{kpis.picking}</strong></button>
       <button onClick={() => setTab("exceptions")} className={tab === "exceptions" ? "active" : ""}><AlertTriangle /><span>缺貨異常</span><strong>{kpis.exceptions}</strong></button>
       <button onClick={() => setTab("locations")} className={tab === "locations" ? "active" : ""}><MapPin /><span>儲位 QR</span><strong>{data.locations?.length || 0}</strong></button>
     </div>
 
-    {tab === "pending" && <div className="shipment-card">
-      <div className="shipment-card-title"><h3>銷貨單轉出貨單</h3><p>銷貨單轉出貨後，系統會比對總倉商品與庫存，不足或未設定儲位會列為異常。</p></div>
-      <div className="shipment-table pending-sales">
-        <div className="shipment-table-head"><span>銷貨單</span><span>客戶</span><span>日期</span><span>品項</span><span>金額</span><span>操作</span></div>
-        {pendingSales.length ? pendingSales.map(row => <div className="shipment-row" key={row.id}>
-          <strong>{row.sales_no}</strong><span>{row.company_name}</span><span>{String(row.sales_date).slice(0, 10)}</span><span>{row.item_count} 項</span><b>{money(row.estimated_total || row.total_amount || 0)}</b>
-          <button className="primary" disabled={saving} onClick={() => act({ action: "createShipmentFromSales", salesDocumentId: row.id }, "已建立出貨單")}>轉出貨單</button>
-        </div>) : <div className="document-empty compact">目前沒有待轉出貨的銷貨單。</div>}
+    {tab === "pending" && <div className="shipment-flow-grid">
+      <div className="shipment-card">
+        <div className="shipment-card-title"><h3>1. 採購單轉銷貨單</h3><p>客戶採購單需先轉成銷貨單，後續才能建立出貨與揀貨。</p></div>
+        <div className="shipment-table pending-orders">
+          <div className="shipment-table-head"><span>採購單</span><span>客戶</span><span>日期</span><span>品項</span><span>金額</span><span>操作</span></div>
+          {pendingOrders.length ? pendingOrders.map(row => <div className="shipment-row" key={row.id}>
+            <strong>{row.order_no}</strong><span>{row.company_name}</span><span>{new Date(row.created_at).toLocaleDateString("zh-TW")}</span><span>{row.item_count} 項／{row.total_qty} 件</span><b>{money(row.total_amount || 0)}</b>
+            <button className="primary" disabled={saving} onClick={() => act({ action: "createSalesFromOrder", orderId: row.id }, "已建立銷貨單")}>轉成銷貨單</button>
+          </div>) : <div className="document-empty compact">沒有待轉銷貨單的採購單。</div>}
+        </div>
+      </div>
+      <div className="shipment-card">
+        <div className="shipment-card-title"><h3>2. 銷貨單建立出貨單</h3><p>建立出貨單時會比對總倉商品、庫存與儲位；異常會留在缺貨異常頁。</p></div>
+        <div className="shipment-table pending-sales">
+          <div className="shipment-table-head"><span>銷貨單</span><span>來源</span><span>客戶</span><span>品項</span><span>金額</span><span>操作</span></div>
+          {pendingSales.length ? pendingSales.map(row => <div className="shipment-row" key={row.id}>
+            <strong>{row.sales_no}</strong><span>{row.source_order_no || "手動銷貨"}</span><span>{row.company_name}</span><span>{row.item_count} 項</span><b>{money(row.estimated_total || row.total_amount || 0)}</b>
+            <button className="primary" disabled={saving} onClick={() => act({ action: "createShipmentFromSales", salesDocumentId: row.id }, "已建立出貨單")}>建立出貨單</button>
+          </div>) : <div className="document-empty compact">{pendingOrders.length ? "先把上方採購單轉成銷貨單，這裡就會出現待建立出貨單。" : "目前沒有待建立出貨單的銷貨單。"}</div>}
+        </div>
+      </div>
+      <div className="shipment-card">
+        <div className="shipment-card-title"><h3>3. 出貨單產生揀貨單</h3><p>沒有缺貨、未對應商品或未設定儲位時，才可產生電子揀貨單。</p></div>
+        <div className="shipment-table ready-picking">
+          <div className="shipment-table-head"><span>出貨單</span><span>客戶</span><span>狀態</span><span>品項</span><span>操作</span></div>
+          {readyForPicking.length ? readyForPicking.map(row => <div className="shipment-row" key={row.id}>
+            <strong>{row.shipment_no}</strong><span>{row.customer_name || row.company_name}</span><span>{row.status}</span><span>{row.items?.length || 0} 項</span>
+            <button className="primary" disabled={saving} onClick={() => act({ action: "createPickingOrder", shipmentId: row.id, origin: window.location.origin }, "已產生揀貨單")}>產生揀貨單</button>
+          </div>) : <div className="document-empty compact">目前沒有可直接產生揀貨單的出貨單。</div>}
+        </div>
       </div>
     </div>}
 
@@ -2553,7 +2592,7 @@ function AccessOverview({ dealers, type }) {
   </section>;
 }
 
-function OrderManager({ orders, dealers, transfers = [], products = [], focus = {}, onUpdate, onCreateTransfer }) {
+function OrderManager({ orders, dealers, transfers = [], sales = [], products = [], focus = {}, onUpdate, onCreateTransfer, onCreateSales }) {
   const [status, setStatus] = useState("待處理");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(orders[0]?.id || "");
@@ -2571,6 +2610,7 @@ function OrderManager({ orders, dealers, transfers = [], products = [], focus = 
   const selected = orders.find(order => order.id === selectedId) || visibleOrders[0] || orders[0];
   const selectedDealer = dealers.find(row => row.company_name === selected?.company);
   const selectedTransfer = transfers.find(transfer => transfer.orderNo === selected?.id);
+  const selectedSales = sales.find(row => row.sourceOrderId === selected?.uuid || row.sourceOrderNo === selected?.id);
   const productMap = Object.fromEntries(products.map(p => [Number(p.id), p]));
   const summary = {
     pending: orders.filter(order => pendingStatuses.includes(order.status)).length,
@@ -2611,6 +2651,16 @@ function OrderManager({ orders, dealers, transfers = [], products = [], focus = 
     setSaving(true);
     try {
       await onCreateTransfer(selected.uuid || selected.id);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function convertToSales() {
+    if (!selected || saving || !onCreateSales) return;
+    setSaving(true);
+    try {
+      await onCreateSales(selected.uuid || selected.id);
     } finally {
       setSaving(false);
     }
@@ -2693,6 +2743,10 @@ function OrderManager({ orders, dealers, transfers = [], products = [], focus = 
             <h3>調撥狀態</h3>
             <p>{selectedTransfer ? <><strong>{selectedTransfer.id}</strong><span>{selectedTransfer.status}</span><small>{selectedTransfer.warehouse} → {selectedTransfer.destination?.storeName || selected.shipping?.storeName || selected.company}</small></> : <><strong>尚未建立調撥單</strong><span>寄售流程需先轉成調撥單，再進行倉庫出庫與客戶倉入庫。</span></>}</p>
           </section>
+          <section>
+            <h3>銷貨狀態</h3>
+            <p>{selectedSales ? <><strong>{selectedSales.id}</strong><span>{selectedSales.status}</span><small>後續可到出貨管理建立出貨單與揀貨單。</small></> : <><strong>尚未轉銷貨單</strong><span>轉成銷貨單後，出貨頁才會出現可建立出貨單的資料。</span></>}</p>
+          </section>
         </div>
         <div className="order-line-table table-scroll">
           <div className="order-line-head"><span>商品</span><span>SKU</span><span>數量</span><span>經銷單價</span><span>小計</span></div>
@@ -2716,6 +2770,7 @@ function OrderManager({ orders, dealers, transfers = [], products = [], focus = 
             <button className="outline" disabled={saving || !canEditQuantity} onClick={() => update()}><Save /> 儲存數量與金額</button>
             <button className="outline" disabled={saving} onClick={() => update()}><Save /> 儲存物流／備註</button>
             <button className="outline" disabled={saving} onClick={printQuote}><FileDown /> 列印報價單</button>
+            <button className="outline" disabled={saving || Boolean(selectedSales) || selected.status === "已取消"} onClick={convertToSales}><FileText /> 轉成銷貨單</button>
             <button className="outline" disabled={saving || Boolean(selectedTransfer) || selected.status === "已取消"} onClick={convertToTransfer}><Truck /> 轉成調撥單</button>
 	          </div>
           {quantityLocked && <small className="order-inventory-note warning">已出貨或已完成的訂單修改需要最高權限與修正原因。若已建立調撥單，也請同步檢查調撥單與倉儲紀錄。</small>}
