@@ -675,6 +675,12 @@
 .sales-row-actions{display:grid;gap:6px}
 .sales-row-actions button{border:1px solid var(--green);background:#fff;padding:7px;display:flex;align-items:center;justify-content:center;gap:4px;font-size:11px}
 .sales-row-actions svg{width:14px}
+.merged-admin-section,.access-overview{display:grid;gap:16px}
+.merged-section-head{background:#fff;border:1px solid var(--line);padding:22px;display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.merged-section-head h2{font-family:"Shippori Mincho";font-size:32px;margin:5px 0}.merged-section-head p{margin:0;color:#737d79;line-height:1.7}
+.merged-tabs{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.merged-tabs button{border:1px solid var(--line);background:#fff;color:var(--green);padding:12px 16px;font-weight:800;display:flex;align-items:center;gap:8px}.merged-tabs button.active{background:var(--green);border-color:var(--green);color:#fff}.merged-tabs svg{width:16px}
+.access-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.access-grid article,.permission-matrix div{background:#fff;border:1px solid var(--line);padding:20px}.access-grid svg{color:var(--orange);width:24px;height:24px}.access-grid strong,.permission-matrix strong{display:block;font-family:"Shippori Mincho";font-size:24px;color:var(--green);margin:8px 0}.access-grid p,.permission-matrix span{color:#747d79;line-height:1.7}
+.permission-matrix{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
 
 .shipment-admin{display:grid;gap:16px}
 .shipment-hero{background:#fff;border:1px solid var(--line);padding:24px;display:flex;align-items:center;justify-content:space-between;gap:18px}
@@ -700,7 +706,7 @@
 .location-form{display:grid;grid-template-columns:2fr 1fr 1fr 130px;gap:10px;margin-bottom:14px}.location-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.location-grid div{border:1px solid var(--line);padding:12px;background:#fbfaf6}.location-grid strong,.location-grid small,.location-grid span{display:block}.location-grid strong{font-family:"Shippori Mincho";font-size:20px}.location-grid small{color:#73807c;margin:5px 0;font-size:11px;word-break:break-all}.location-grid span{font-size:12px;color:#53605c}
 
 @media(max-width:850px){
-  .partner-action-grid,.dashboard-cards,.dashboard-panels,.document-kpis,.consignment-kpis,.warehouse-layout,.warehouse-bottom-grid,.warehouse-missing-list,.shipment-kpis,.shipment-layout,.shipment-actions,.location-form,.location-grid{grid-template-columns:1fr}
+  .partner-action-grid,.dashboard-cards,.dashboard-panels,.document-kpis,.consignment-kpis,.warehouse-layout,.warehouse-bottom-grid,.warehouse-missing-list,.shipment-kpis,.shipment-layout,.shipment-actions,.location-form,.location-grid,.access-grid,.permission-matrix{grid-template-columns:1fr}
   .dashboard-hero{display:block}
   .dashboard-hero h2{font-size:28px}
   .admin-menu{overflow:auto;align-items:stretch}
@@ -716,6 +722,8 @@
   .warehouse-product-row span:nth-child(4),.warehouse-product-row span:nth-child(5),.warehouse-product-row span:nth-child(6){font-size:17px}
   .warehouse-movement-row{grid-template-columns:1fr}
   .shipment-hero,.shipment-card-title,.shipment-detail-head{display:block}
+  .merged-section-head{display:block}
+  .merged-tabs{justify-content:flex-start;margin-top:14px}
   .pending-sales .shipment-table-head,.pending-sales .shipment-row,.exceptions .shipment-table-head,.exceptions .shipment-row,.shipment-item,.picking-item,.shipment-complete{grid-template-columns:1fr}
   .shipment-table-head{display:none}
 }

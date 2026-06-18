@@ -2255,23 +2255,25 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
     <div className="admin-layout">
       <aside className="admin-menu">
         <button className={tab === "dashboard" ? "active" : ""} onClick={() => goTab("dashboard")}><LayoutDashboard /> 儀錶板</button>
-        <span>營運處理</span>
-        <button className={tab === "orders" ? "active" : ""} onClick={() => goTab("orders")}><ClipboardCheck /> 採購單處理</button>
-        <button className={tab === "transfers" ? "active" : ""} onClick={() => goTab("transfers")}><Truck /> 調撥／倉儲</button>
-        <button className={tab === "shipments" ? "active" : ""} onClick={() => goTab("shipments")}><PackageCheck /> 出貨管理</button>
-        <button className={tab === "reports" ? "active" : ""} onClick={() => goTab("reports")}><ClipboardCheck /> 寄售回報審核</button>
-        <button className={tab === "sales" ? "active" : ""} onClick={() => goTab("sales")}><FileText /> 銷貨單</button>
-        <button className={tab === "import" ? "active" : ""} onClick={() => goTab("import")}><Upload /> Excel 正式銷貨單</button>
+        <span>訂單與交易</span>
+        <button className={tab === "orders" ? "active" : ""} onClick={() => goTab("orders")}><ClipboardCheck /> 採購</button>
+        <button className={tab === "sales" || tab === "import" ? "active" : ""} onClick={() => goTab("sales")}><FileText /> 銷售</button>
+        <button className={tab === "shipments" ? "active" : ""} onClick={() => goTab("shipments")}><PackageCheck /> 出貨</button>
+        <button className={tab === "reports" ? "active" : ""} onClick={() => goTab("reports")}><ClipboardCheck /> 寄售</button>
+        <button className={tab === "transfers" ? "active" : ""} onClick={() => goTab("transfers")}><Truck /> 調撥</button>
         <span>商品與庫存</span>
-        <button className={tab === "warehouseStock" ? "active" : ""} onClick={() => goTab("warehouseStock")}><Warehouse /> 總倉庫存管理</button>
+        <button className={tab === "warehouseStock" ? "active" : ""} onClick={() => goTab("warehouseStock")}><Warehouse /> 庫存總覽</button>
         <button className={tab === "inventory" ? "active" : ""} onClick={() => goTab("inventory")}><Warehouse /> 寄售庫存</button>
-        <button className={tab === "adjust" ? "active" : ""} onClick={() => goTab("adjust")}><SlidersHorizontal /> 盤點修正</button>
+        <button className={tab === "adjust" ? "active" : ""} onClick={() => goTab("adjust")}><SlidersHorizontal /> 庫存調整</button>
         <button className={tab === "history" ? "active" : ""} onClick={() => goTab("history")}><History /> 異動紀錄</button>
-        <span>經銷商與系統</span>
-        <button className={tab === "accounts" ? "active" : ""} onClick={() => goTab("accounts")}><UserRound /> 經銷商帳號</button>
-        <button className={tab === "channels" ? "active" : ""} onClick={() => goTab("channels")}><Store /> 通路設定</button>
+        <span>使用者與權限</span>
+        <button className={tab === "admins" ? "active" : ""} onClick={() => goTab("admins")}><UserRound /> 管理人員</button>
+        <button className={tab === "accounts" ? "active" : ""} onClick={() => goTab("accounts")}><UserRound /> 經銷商</button>
+        <button className={tab === "permissions" ? "active" : ""} onClick={() => goTab("permissions")}><Settings /> 權限</button>
+        <button className={tab === "channels" ? "active" : ""} onClick={() => goTab("channels")}><Store /> 通路</button>
+        <span>系統設定</span>
         <button className={tab === "content" ? "active" : ""} onClick={() => goTab("content")}><LayoutDashboard /> 首頁內容</button>
-        <button className={tab === "api" ? "active" : ""} onClick={() => goTab("api")}><Settings /> API 設定</button>
+        <button className={tab === "api" ? "active" : ""} onClick={() => goTab("api")}><Settings /> API</button>
       </aside>
       <section className="admin-content">
         {tab === "dashboard" ? <AdminDashboard orders={orders} transfers={transfers} reports={consignmentReports} sales={sales} movements={movements} products={products} dealers={dealers} onGo={goTab} /> : tab === "api" ? <WooCommerceSettings api={api} /> : tab === "content" ? <div className="admin-form">
@@ -2289,7 +2291,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "shipments" ? <ShipmentManager api={api} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "admins" ? <AccessOverview dealers={dealers} type="admins" /> : tab === "permissions" ? <AccessOverview dealers={dealers} type="permissions" /> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "shipments" ? <ShipmentManager api={api} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesWorkspace channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
@@ -2513,6 +2515,42 @@ function ShipmentDetail({ shipment, saving, trackingNo, setTrackingNo, onCreateP
       <button className="primary" disabled={saving || shipment.status !== "待出貨"} onClick={onShip}><Truck /> 完成出貨</button>
     </div>
   </div>;
+}
+
+function SalesWorkspace({ channels, products, movements, sales, onSave }) {
+  const [section, setSection] = useState("sales");
+  return <section className="merged-admin-section">
+    <div className="merged-section-head">
+      <div><span className="eyebrow">SALES</span><h2>銷售管理</h2><p>銷貨單查詢、正式銷貨單匯入與後續對帳集中在同一個入口。</p></div>
+      <div className="merged-tabs">
+        <button className={section === "sales" ? "active" : ""} onClick={() => setSection("sales")}><FileText /> 銷貨單</button>
+        <button className={section === "import" ? "active" : ""} onClick={() => setSection("import")}><Upload /> Excel 匯入</button>
+      </div>
+    </div>
+    {section === "sales"
+      ? <SalesManager channels={channels} products={products} movements={movements} sales={sales} onSave={onSave} />
+      : <FormalSalesImport channels={channels} products={products} movements={movements} sales={sales} onSave={onSave} />}
+  </section>;
+}
+
+function AccessOverview({ dealers, type }) {
+  const adminLike = dealers.filter(row => row.email?.includes("admin") || row.company_name?.includes("管理"));
+  const title = type === "admins" ? "管理人員" : "權限設定";
+  return <section className="access-overview">
+    <div className="merged-section-head">
+      <div><span className="eyebrow">ACCESS CONTROL</span><h2>{title}</h2><p>{type === "admins" ? "集中檢視後台管理帳號與行政人員權限。現階段管理員帳號由登入系統控管，經銷商帳號仍在「經銷商」頁建立。" : "整理目前平台的角色分工，後續可再擴充成細部權限矩陣。"}</p></div>
+    </div>
+    {type === "admins" ? <div className="access-grid">
+      <article><UserRound /><strong>最高管理權限</strong><p>可進入後台、修改訂單狀態、處理出貨與庫存流程。</p></article>
+      <article><Settings /><strong>行政作業權限</strong><p>建議後續可拆分為訂單、出貨、庫存、帳務等角色。</p></article>
+      <article><ClipboardCheck /><strong>目前管理帳號線索</strong><p>{adminLike.length ? `${adminLike.length} 筆可能的管理帳號／公司資料。` : "目前未在經銷商清單中偵測到管理人員資料。"}</p></article>
+    </div> : <div className="permission-matrix">
+      <div><strong>Admin</strong><span>儀錶板、訂單交易、庫存、使用者、系統設定</span></div>
+      <div><strong>倉儲</strong><span>出貨、調撥、庫存總覽、庫存調整、異動紀錄</span></div>
+      <div><strong>行政</strong><span>採購、銷售、寄售、經銷商資料與通路設定</span></div>
+      <div><strong>經銷商</strong><span>前台採購、單據進度、寄售庫存與銷售回報</span></div>
+    </div>}
+  </section>;
 }
 
 function OrderManager({ orders, dealers, transfers = [], products = [], focus = {}, onUpdate, onCreateTransfer }) {
