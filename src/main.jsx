@@ -814,7 +814,7 @@ function App() {
         </div>
       </header>
 
-      {view === "home" ? <PartnerHome content={content} products={managedProducts} onShop={() => setView("shop")} /> : view === "shop" ? (
+      {view === "home" ? <PartnerHome content={content} products={managedProducts} company={user.company} orders={orders} movements={movements.filter(m => m.company === user.company)} reports={consignmentReports.filter(r => r.company === user.company)} settings={channelSettings} onShop={() => setView("shop")} onOrders={() => setView("orders")} onReport={() => setView("consignmentReport")} /> : view === "shop" ? (
         <main className="purchase-page">
           <section className="purchase-heading">
             <div><span className="eyebrow">B2B QUICK ORDER</span><h1>快速採購單</h1><p>搜尋商品並直接填寫數量，右側清單會同步更新。</p></div>
@@ -969,18 +969,31 @@ function SetPassword({ mode, onSubmit }) {
   </div>;
 }
 
-function PartnerHome({ content, products, onShop }) {
+function PartnerHome({ content, products, company, orders = [], movements = [], reports = [], settings = {}, onShop, onOrders, onReport }) {
   const [applied, setApplied] = useState(false);
   const newest = products.slice(0, 4);
+  const activeOrders = orders.filter(order => !["已完成", "已取消"].includes(order.status));
+  const lowStockCount = settings.mode === "consignment"
+    ? products.filter(product => {
+      const qty = movements.filter(m => Number(m.productId) === Number(product.id)).reduce((sum, m) => sum + Number(m.qty), 0);
+      return qty > 0 && qty <= 5;
+    }).length
+    : 0;
+  const pendingReports = reports.filter(report => ["待審核", "已退回"].includes(report.status)).length;
   return <main className="partner-home">
     <section className="partner-hero">
       <div><span className="eyebrow">DONG TANG PARTNER HUB</span><h1>{content.heroTitle}</h1><p>{content.heroText}</p><button className="primary" onClick={onShop}>前往快速採購 <ChevronRight /></button></div>
       <img src={content.heroImage} alt="" />
     </section>
-    <section className="home-shortcuts">
-      <a href="#new-products"><Megaphone /><span><strong>新品上市</strong><small>掌握最新商品資訊</small></span></a>
-      <a href="#display-apply"><Store /><span><strong>展示架申請</strong><small>取得通路陳列支援</small></span></a>
-      <a href="#events"><CalendarDays /><span><strong>活動訊息</strong><small>查看最新檔期方案</small></span></a>
+	    <section className="home-shortcuts">
+	      <a href="#new-products"><Megaphone /><span><strong>新品上市</strong><small>掌握最新商品資訊</small></span></a>
+	      <a href="#display-apply"><Store /><span><strong>展示架申請</strong><small>取得通路陳列支援</small></span></a>
+	      <a href="#events"><CalendarDays /><span><strong>活動訊息</strong><small>查看最新檔期方案</small></span></a>
+	    </section>
+    <section className="partner-action-grid">
+      <button onClick={onShop}><ShoppingBag /><span>快速採購</span><strong>建立採購單</strong><small>以條列式表格快速輸入採購數量。</small></button>
+      <button onClick={onOrders}><Truck /><span>單據進度</span><strong>{activeOrders.length} 筆進行中</strong><small>查看採購進度、歷史銷貨與寄售庫存。</small></button>
+      {settings.mode === "consignment" && <button onClick={onReport}><ClipboardCheck /><span>寄售回報</span><strong>{pendingReports ? `${pendingReports} 筆待追蹤` : "填寫本期銷售"}</strong><small>{lowStockCount ? `${lowStockCount} 項低庫存，可同步安排補貨。` : "回報銷售後由東瑭審核沖帳。"}</small></button>}
     </section>
     <section className="home-section" id="new-products">
       <div className="home-section-title"><div><span className="eyebrow">NEW ARRIVALS</span><h2>新品上市</h2></div><button onClick={onShop}>查看全部商品 <ChevronRight /></button></div>
@@ -1740,8 +1753,51 @@ function WooCommerceSettings({ api }) {
   );
 }
 
+function AdminDashboard({ orders, transfers, reports, sales, movements, products, dealers, onGo }) {
+  const pendingOrders = orders.filter(order => ["訂單成立", "已確認", "備貨中"].includes(order.status));
+  const readyTransfers = transfers.filter(transfer => ["草稿", "已確認"].includes(transfer.status));
+  const pendingReports = reports.filter(report => report.status === "待審核");
+  const approvedReports = reports.filter(report => report.status === "已審核");
+  const productStockRows = products.map(product => ({
+    ...product,
+    qty: movements.filter(m => Number(m.productId) === Number(product.id)).reduce((sum, movement) => sum + Number(movement.qty), 0)
+  }));
+  const lowStockRows = productStockRows.filter(product => product.qty > 0 && product.qty <= 5);
+  const monthKey = new Date().toISOString().slice(0, 7);
+  const monthSales = sales
+    .filter(doc => String(doc.month || doc.date || "").startsWith(monthKey))
+    .reduce((sum, doc) => sum + Number(doc.totalAmount || doc.items?.reduce((s, item) => s + item.qty * item.price, 0) || 0), 0);
+  const latestOrders = orders.slice(0, 5);
+  const urgentReports = [...pendingReports, ...approvedReports].slice(0, 5);
+
+  return <div className="admin-dashboard">
+    <div className="dashboard-hero">
+      <div><span className="eyebrow">TODAY'S OPERATIONS</span><h2>行政工作儀錶板</h2><p>先處理待確認採購單、待調撥單與寄售銷售回報；每張卡片都可以直接點進工作頁。</p></div>
+      <strong>{new Date().toLocaleDateString("zh-TW")}</strong>
+    </div>
+    <div className="dashboard-cards">
+      <button onClick={() => onGo("orders")}><ClipboardCheck /><span>待處理採購單</span><strong>{pendingOrders.length}</strong><small>確認、改數量、列印報價或轉調撥</small></button>
+      <button onClick={() => onGo("transfers")}><Truck /><span>待調撥單</span><strong>{readyTransfers.length}</strong><small>確認調撥與主倉出庫</small></button>
+      <button onClick={() => onGo("reports")}><FileText /><span>寄售回報待審</span><strong>{pendingReports.length}</strong><small>{approvedReports.length} 筆已審核待轉銷貨單</small></button>
+      <button onClick={() => onGo("inventory")}><Warehouse /><span>低庫存品項</span><strong>{lowStockRows.length}</strong><small>查看經銷商寄售庫存水位</small></button>
+      <button onClick={() => onGo("sales")}><Database /><span>本月銷貨金額</span><strong>{money(monthSales)}</strong><small>查看銷貨單與請款資料</small></button>
+      <button onClick={() => onGo("accounts")}><UserRound /><span>經銷商帳號</span><strong>{dealers.length}</strong><small>管理帳號、模式與門市資料</small></button>
+    </div>
+    <div className="dashboard-panels">
+      <section>
+        <div className="panel-title"><h3>最新採購單</h3><button onClick={() => onGo("orders")}>全部採購單 <ChevronRight /></button></div>
+        {latestOrders.length ? latestOrders.map(order => <button className="dashboard-row" key={order.id} onClick={() => onGo("orders")}><span><strong>{order.id}</strong><small>{order.company} · {order.date}</small></span><b className={`order-status ${order.status === "已取消" ? "cancelled" : ""}`}>{order.status}</b><em>{money(order.amount)}</em></button>) : <div className="document-empty compact">目前沒有採購單</div>}
+      </section>
+      <section>
+        <div className="panel-title"><h3>寄售回報追蹤</h3><button onClick={() => onGo("reports")}>前往審核 <ChevronRight /></button></div>
+        {urgentReports.length ? urgentReports.map(report => <button className="dashboard-row" key={report.id} onClick={() => onGo("reports")}><span><strong>{report.id}</strong><small>{report.company} · {report.periodStart} 至 {report.periodEnd}</small></span><b className={`order-status ${report.status === "已審核" ? "" : "cancelled"}`}>{report.status}</b><em>{money(report.totalAmount)}</em></button>) : <div className="document-empty compact">目前沒有待追蹤回報</div>}
+      </section>
+    </div>
+  </div>;
+}
+
 function AdminPanel({ api, content, products, productEdits, channels, dealers, orders, transfers, warehouseMovements, movements, sales, consignmentReports, onSave, onSaveInventory, onCreateDealerAccount, onUpdateOrder, onCreateTransfer, onUpdateTransfer, onReviewConsignmentReport, onConvertConsignmentReport }) {
-  const [tab, setTab] = useState("home");
+  const [tab, setTab] = useState("dashboard");
   const [draft, setDraft] = useState(content);
   const [edits, setEdits] = useState(productEdits);
   const [channelDraft, setChannelDraft] = useState(channels);
@@ -1751,12 +1807,31 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
   }
 
   return <main className="admin-page">
-    <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>內容管理後台</h1><p>修改首頁、商品與各通路經銷折數。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
+    <section className="admin-heading"><div><span className="eyebrow">ADMIN CONSOLE</span><h1>營運管理後台</h1><p>從儀錶板掌握待處理事項，快速進入採購、調撥、寄售與商品管理。</p></div><button className="primary" onClick={() => onSave(draft, edits, channelDraft)}><Save /> 儲存所有變更</button></section>
     <div className="admin-notice">帳號、內容、訂單與正式營運資料由目前的 GCP 伺服器與 PostgreSQL 資料庫集中管理。</div>
     <div className="admin-layout">
-      <aside className="admin-menu"><button className={tab === "home" ? "active" : ""} onClick={() => setTab("home")}><LayoutDashboard /> 首頁內容</button><button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button><button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button><button className={tab === "transfers" ? "active" : ""} onClick={() => setTab("transfers")}><Truck /> 調撥／倉儲</button><button className={tab === "masterProducts" ? "active" : ""} onClick={() => setTab("masterProducts")}><Database /> 商品資料庫</button><button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 官網商品同步</button><button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button><button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button><button className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}><ClipboardCheck /> 寄售回報審核</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button><button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button><button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button></aside>
+      <aside className="admin-menu">
+        <button className={tab === "dashboard" ? "active" : ""} onClick={() => setTab("dashboard")}><LayoutDashboard /> 儀錶板</button>
+        <span>營運處理</span>
+        <button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button>
+        <button className={tab === "transfers" ? "active" : ""} onClick={() => setTab("transfers")}><Truck /> 調撥／倉儲</button>
+        <button className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}><ClipboardCheck /> 寄售回報審核</button>
+        <button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button>
+        <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button>
+        <span>商品與庫存</span>
+        <button className={tab === "masterProducts" ? "active" : ""} onClick={() => setTab("masterProducts")}><Database /> 商品資料庫</button>
+        <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 官網商品同步</button>
+        <button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button>
+        <button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button>
+        <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button>
+        <span>經銷商與系統</span>
+        <button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button>
+        <button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button>
+        <button className={tab === "content" ? "active" : ""} onClick={() => setTab("content")}><LayoutDashboard /> 首頁內容</button>
+        <button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button>
+      </aside>
       <section className="admin-content">
-        {tab === "api" ? <WooCommerceSettings api={api} /> : tab === "home" ? <div className="admin-form">
+        {tab === "dashboard" ? <AdminDashboard orders={orders} transfers={transfers} reports={consignmentReports} sales={sales} movements={movements} products={products} dealers={dealers} onGo={setTab} /> : tab === "api" ? <WooCommerceSettings api={api} /> : tab === "content" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
           <AdminField label="首頁介紹文字" value={draft.heroText} onChange={v => setDraft({ ...draft, heroText: v })} area />
           <AdminField label="首頁主圖片網址" value={draft.heroImage} onChange={v => setDraft({ ...draft, heroImage: v })} icon />
@@ -1841,6 +1916,7 @@ function OrderManager({ orders, dealers, transfers = [], products = [], onUpdate
   }
   const quantityLocked = selected && ["已出貨", "已完成"].includes(selected.status);
   const canEditQuantity = !quantityLocked || forceEdit;
+  const suggestedNext = selected ? nextStatus(selected.status) : "";
   function printQuote() {
     if (!selected) return;
     openPrintableDocument({
@@ -1924,18 +2000,18 @@ function OrderManager({ orders, dealers, transfers = [], products = [], onUpdate
           <span>稅額 {money(selected.taxAmount || 0)}</span>
           <strong>總計 {money(selected.amount)}</strong>
         </div>
-        <div className="order-update-panel">
-          <label><span>物流單號</span><input value={draft.trackingNo} onChange={e => setDraft({ ...draft, trackingNo: e.target.value })} placeholder="可空白，出貨後補登" /></label>
-          <label><span>內部備註</span><textarea value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} placeholder="例如：急件、缺貨品項、業務交辦事項" /></label>
-          {quantityLocked && <div className="override-panel"><label><input type="checkbox" checked={forceEdit} onChange={e => setForceEdit(e.target.checked)} /> 最高權限強制修正已出貨／完成訂單數量</label>{forceEdit && <input value={overrideReason} onChange={e => setOverrideReason(e.target.value)} placeholder="請填寫修正原因，例如：出貨後發現數量登錄錯誤" />}</div>}
-	          <div className="order-actions">
-	            <select value={selected.status} onChange={e => update(e.target.value)} disabled={saving}>{orderStatusOptions.map(option => <option key={option}>{option}</option>)}</select>
-	            <button className="outline" disabled={saving || !canEditQuantity} onClick={() => update()}><Save /> 儲存數量與金額</button>
-	            <button className="outline" disabled={saving} onClick={() => update()}><Save /> 儲存物流／備註</button>
-	            <button className="outline" disabled={saving} onClick={printQuote}><FileDown /> 列印報價單</button>
-	            <button className="outline" disabled={saving || Boolean(selectedTransfer) || selected.status === "已取消"} onClick={convertToTransfer}><Truck /> 轉成調撥單</button>
-            {nextStatus(selected.status) !== selected.status && <button className="primary" disabled={saving} onClick={() => update(nextStatus(selected.status))}>{saving ? <RefreshCw className="spin-icon" /> : <ClipboardCheck />} 推進到「{nextStatus(selected.status)}」</button>}
-          </div>
+	        <div className="order-update-panel">
+          {selected && suggestedNext !== selected.status && <div className="next-step-banner"><div><span>建議下一步</span><strong>將採購單推進到「{suggestedNext}」</strong><small>{selectedTransfer ? `已建立調撥單 ${selectedTransfer.id}` : selectedDealer?.mode === "consignment" ? "寄售訂單完成確認後，建議轉成調撥單。" : "確認商品與數量後即可推進流程。"}</small></div><button className="primary" disabled={saving} onClick={() => update(suggestedNext)}>{saving ? <RefreshCw className="spin-icon" /> : <ClipboardCheck />} 執行下一步</button></div>}
+	          <label><span>物流單號</span><input value={draft.trackingNo} onChange={e => setDraft({ ...draft, trackingNo: e.target.value })} placeholder="可空白，出貨後補登" /></label>
+	          <label><span>內部備註</span><textarea value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} placeholder="例如：急件、缺貨品項、業務交辦事項" /></label>
+	          {quantityLocked && <div className="override-panel"><label><input type="checkbox" checked={forceEdit} onChange={e => setForceEdit(e.target.checked)} /> 最高權限強制修正已出貨／完成訂單數量</label>{forceEdit && <input value={overrideReason} onChange={e => setOverrideReason(e.target.value)} placeholder="請填寫修正原因，例如：出貨後發現數量登錄錯誤" />}</div>}
+          <div className="order-actions secondary-actions">
+            <select value={selected.status} onChange={e => update(e.target.value)} disabled={saving}>{orderStatusOptions.map(option => <option key={option}>{option}</option>)}</select>
+            <button className="outline" disabled={saving || !canEditQuantity} onClick={() => update()}><Save /> 儲存數量與金額</button>
+            <button className="outline" disabled={saving} onClick={() => update()}><Save /> 儲存物流／備註</button>
+            <button className="outline" disabled={saving} onClick={printQuote}><FileDown /> 列印報價單</button>
+            <button className="outline" disabled={saving || Boolean(selectedTransfer) || selected.status === "已取消"} onClick={convertToTransfer}><Truck /> 轉成調撥單</button>
+	          </div>
           {quantityLocked && <small className="order-inventory-note warning">已出貨或已完成的訂單修改需要最高權限與修正原因。若已建立調撥單，也請同步檢查調撥單與倉儲紀錄。</small>}
           {selectedDealer?.mode === "consignment" && <small className="order-inventory-note">寄售流程建議：採購單確認 → 轉調撥單 → 調撥單已調撥時，才寫入東瑭主倉出庫與經銷商寄售入庫。</small>}
         </div>
@@ -2359,6 +2435,7 @@ function ConsignmentReportCenter({ company, products, movements, reports, settin
   const selectedRows = stockRows
     .map(product => ({ ...product, soldQty: Math.max(0, Math.floor(Number(qty[product.id] || 0))) }))
     .filter(product => product.soldQty > 0);
+  const lowStockRows = stockRows.filter(product => product.stock <= 5);
   const pricing = calculatePricing(selectedRows.map(product => ({
     id: product.id,
     sku: product.sku,
@@ -2401,6 +2478,7 @@ function ConsignmentReportCenter({ company, products, movements, reports, settin
   return <main className="consignment-page">
     <section className="orders-intro"><span className="eyebrow">CONSIGNMENT SALES</span><h1>寄售銷售回報</h1><p>回報本期實際銷售數量，東瑭審核後會轉成銷貨單並沖抵寄售庫存。</p></section>
     <div className="document-tabs"><button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>我的寄售庫存</button><button className={tab === "report" ? "active" : ""} onClick={() => setTab("report")}>填寫銷售回報</button><button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}>銷售回報紀錄</button></div>
+    <div className="consignment-kpis"><button onClick={() => setTab("stock")}><Warehouse /><span>寄售品項</span><strong>{stockRows.length}</strong></button><button onClick={() => setTab("stock")}><Clock3 /><span>低庫存</span><strong>{lowStockRows.length}</strong></button><button onClick={() => setTab("report")}><ClipboardCheck /><span>本期已填</span><strong>{selectedRows.reduce((sum, item) => sum + item.soldQty, 0)} 件</strong></button><button onClick={() => setTab("history")}><FileText /><span>回報紀錄</span><strong>{reports.length}</strong></button></div>
     {tab === "stock" && <section className="consignment-card">
       <div className="report-section-title"><div><h2>目前寄售庫存</h2><p>以下商品為目前仍寄放於通路端的品項。</p></div><strong>{stockRows.length} 項</strong></div>
       <div className="consignment-stock-head"><span>SKU</span><span>商品</span><span>目前庫存</span><span>建議</span></div>
@@ -2430,11 +2508,17 @@ function ConsignmentReportCenter({ company, products, movements, reports, settin
     {tab === "history" && <section className="consignment-card">
       <div className="report-section-title"><div><h2>回報單紀錄</h2><p>可查看審核狀態、退回原因與已轉出的正式銷貨單號。</p></div><strong>{reports.length} 筆</strong></div>
       {reports.length ? reports.map(report => <article className="report-history-card" key={report.id}>
-        <div><span className={`status ${report.status === "已退回" ? "cancelled" : report.status === "待審核" ? "preparing" : ""}`}>{report.status}</span><h3>{report.id}</h3><small>{report.periodStart} 至 {report.periodEnd} · {report.items.reduce((sum, item) => sum + item.soldQty, 0)} 件</small>{report.returnReason && <p>退回原因：{report.returnReason}</p>}{report.salesNo && <p>已轉銷貨單：{report.salesNo}</p>}</div>
+        <div><span className={`status ${report.status === "已退回" ? "cancelled" : report.status === "待審核" ? "preparing" : ""}`}>{report.status}</span><h3>{report.id}</h3><small>{report.periodStart} 至 {report.periodEnd} · {report.items.reduce((sum, item) => sum + item.soldQty, 0)} 件</small><ReportStatusSteps status={report.status} />{report.returnReason && <p>退回原因：{report.returnReason}</p>}{report.salesNo && <p>已轉銷貨單：{report.salesNo}</p>}</div>
         <strong>{money(report.totalAmount)}</strong>
       </article>) : <div className="document-empty">目前尚未建立寄售銷售回報單。</div>}
     </section>}
   </main>;
+}
+
+function ReportStatusSteps({ status }) {
+  const steps = ["待審核", "已審核", "已轉銷貨單"];
+  const activeIndex = status === "已退回" ? 0 : status === "已作廢" ? -1 : Math.max(0, steps.indexOf(status));
+  return <div className="mini-steps">{steps.map((step, index) => <span className={activeIndex >= index ? "done" : ""} key={step}>{step}</span>)}</div>;
 }
 
 function dealerPriceWithSettings(price, settings) {
@@ -2484,6 +2568,8 @@ function ConsignmentReportAdmin({ reports, movements, onReview, onConvert }) {
       <div className="report-list">{visible.map(report => <button key={report.id} className={selected?.id === report.id ? "active" : ""} onClick={() => setSelectedId(report.id)}><strong>{report.id}</strong><small>{report.company} · {report.periodStart} 至 {report.periodEnd}</small><span>{report.status}</span></button>)}{!visible.length && <div className="document-empty">沒有符合條件的回報單。</div>}</div>
       {selected && <div className="report-detail-panel">
         <div className="order-detail-head"><div><span>{selected.company}</span><h2>{selected.id}</h2><small>{selected.periodStart} 至 {selected.periodEnd}</small></div><span className={`status ${selected.status === "待審核" ? "preparing" : ""}`}>{selected.status}</span></div>
+        {selected.status === "待審核" && <div className="next-step-banner"><div><span>建議下一步</span><strong>審核此寄售回報單</strong><small>{hasStockIssue ? "目前有庫存不足品項，請先檢查庫存異動。" : "數量無異常時，可審核通過後轉成銷貨單。"}</small></div><button className="primary" disabled={saving || hasStockIssue} onClick={() => review("已審核")}><ClipboardCheck /> 審核通過</button></div>}
+        {selected.status === "已審核" && <div className="next-step-banner"><div><span>建議下一步</span><strong>轉成銷貨單並沖抵庫存</strong><small>系統會自動扣除該經銷商寄售庫存，並建立銷貨單金額。</small></div><button className="primary" disabled={saving || hasStockIssue} onClick={convert}><FileText /> 轉銷貨單</button></div>}
         {hasStockIssue && <div className="admin-warning">有品項回報數量超過目前寄售庫存，請先確認庫存異動後再審核。</div>}
         <div className="report-detail-head"><span>SKU</span><span>商品</span><span>回報數量</span><span>目前庫存</span><span>金額</span></div>
         {selected.items.map(item => {
@@ -2510,6 +2596,11 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores
   const selectedStore = stores.find(store => store.id === selectedStoreId);
   return <aside className="purchase-list">
     <div className="list-head"><div><span className="eyebrow">CURRENT ORDER</span><h2>本次採購清單</h2></div><b>{items.length} 項／{totalQty} 件</b></div>
+    <div className="purchase-list-status">
+      <span className={items.length ? "ready" : ""}><ShoppingBag /> {items.length ? "已選商品" : "尚未選品"}</span>
+      <span className={selectedStore ? "ready" : "warning"}><Store /> {selectedStore ? selectedStore.store_name : "未選門市"}</span>
+      <span><FileText /> {settings.hideDealerPrice ? "價格另行確認" : money(subtotal)}</span>
+    </div>
     <div className="list-items">{!items.length ? <div className="empty"><ShoppingBag /><h3>尚未選擇商品</h3><p>在左側輸入數量，商品會立即出現在這裡。</p></div> : items.map(item =>
       <div className="list-item" key={item.id}>
         <img className="list-item-image" src={item.image} alt={item.name} onError={e => { e.currentTarget.src = "https://eavo.com.tw/wp-content/uploads/2023/07/LOGO.png"; }} />
@@ -2537,7 +2628,7 @@ function PurchaseList({ items, subtotal, totalQty, dealerPrice, settings, stores
           <div className="shipping-actions"><button type="button" onClick={onManageStores}>管理門市資料</button></div>
         </> : <div className="shipping-empty">尚未設定門市，請先新增收貨據點。</div>}
       </details>
-      <div className="summary"><span>採購總計</span><strong>{settings.hideDealerPrice ? "價格另行確認" : money(subtotal)}</strong><small>{discountLabel(settings.discount)} · {pricingDescription(settings)}</small></div>
+	      <div className="summary"><span>採購總計</span><strong>{settings.hideDealerPrice ? "價格另行確認" : money(subtotal)}</strong><small>{discountLabel(settings.discount)} · {pricingDescription(settings)}</small></div>
       {!items.length ? <div className="checkout-hint">請先在左側輸入商品數量</div> : !selectedStoreId ? <div className="checkout-hint warning">請先選擇收貨門市</div> : null}
       <button className="primary checkout" disabled={!items.length || !selectedStoreId || checkingOut} onClick={onCheckout}>
         {checkingOut ? <><RefreshCw className="spin-icon" /> 建立採購單中...</> : <>建立採購單 <ChevronRight /></>}
@@ -2587,9 +2678,10 @@ function DocumentCenter({ company, orders, sales, products, movements, settings 
     setStockAlerts(next);
     localStorage.setItem(stockAlertKey(company), JSON.stringify(next));
   }
-  return <main className="orders-page document-center">
-    <div className="orders-intro"><span className="eyebrow">PARTNER DOCUMENT CENTER</span><h1>單據與進度中心</h1><p>統整採購進度、歷史採購、銷貨單據與目前寄售庫存。</p></div>
-    <div className="document-tabs"><button className={tab === "progress" ? "active" : ""} onClick={() => setTab("progress")}>目前進度</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>歷史採購</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>歷史銷貨</button>{settings.mode === "consignment" && <button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>寄售庫存</button>}</div>
+	  return <main className="orders-page document-center">
+	    <div className="orders-intro"><span className="eyebrow">PARTNER DOCUMENT CENTER</span><h1>單據與進度中心</h1><p>統整採購進度、歷史採購、銷貨單據與目前寄售庫存。</p></div>
+	    <div className="document-tabs"><button className={tab === "progress" ? "active" : ""} onClick={() => setTab("progress")}>目前進度</button><button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}>歷史採購</button><button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}>歷史銷貨</button>{settings.mode === "consignment" && <button className={tab === "stock" ? "active" : ""} onClick={() => setTab("stock")}>寄售庫存</button>}</div>
+    <div className="document-kpis"><button onClick={() => setTab("progress")}><Truck /><span>進行中採購</span><strong>{activeOrders.length}</strong></button><button onClick={() => setTab("orders")}><ClipboardCheck /><span>歷史採購</span><strong>{orders.length}</strong></button><button onClick={() => setTab("sales")}><FileText /><span>銷貨單</span><strong>{sales.length}</strong></button>{settings.mode === "consignment" && <button onClick={() => setTab("stock")}><Warehouse /><span>低庫存</span><strong>{stockInventoryRows.filter(row => row.low).length}</strong></button>}</div>
     {tab === "progress" && (activeOrders.length ? <div className="progress-orders">
       <div className="progress-summary"><div><h2>進行中的採購單</h2><p>以下採購單尚未完成，會依後台處理狀態同步更新。</p></div><span>{activeOrders.length} 筆進行中</span></div>
       {activeOrders.map((order, index) => <div className="current-order" key={order.id}>
