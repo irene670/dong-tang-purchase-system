@@ -69,7 +69,21 @@ async function bootstrap(user) {
   const products = await db.sql`
     SELECT o.*, pm.item_no, pm.barcode, pm.unit, pm.supplier, pm.woo_permalink
     FROM product_overrides o
-    LEFT JOIN product_master pm ON pm.woo_product_id=o.product_id OR pm.item_no=o.sku OR pm.barcode=o.sku
+    LEFT JOIN LATERAL (
+      SELECT item_no, barcode, unit, supplier, woo_permalink
+      FROM product_master pm
+      WHERE pm.woo_product_id=o.product_id
+        OR (NULLIF(pm.item_no, '') IS NOT NULL AND NULLIF(o.sku, '') IS NOT NULL AND pm.item_no=o.sku)
+        OR (NULLIF(pm.barcode, '') IS NOT NULL AND NULLIF(o.sku, '') IS NOT NULL AND pm.barcode=o.sku)
+      ORDER BY
+        CASE
+          WHEN pm.woo_product_id=o.product_id THEN 0
+          WHEN pm.item_no=o.sku THEN 1
+          ELSE 2
+        END,
+        pm.updated_at DESC NULLS LAST
+      LIMIT 1
+    ) pm ON true
     ORDER BY o.product_id`;
   const dealers = isAdmin(user)
     ? await db.sql`SELECT * FROM dealers ORDER BY company_name`
