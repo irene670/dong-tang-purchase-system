@@ -168,13 +168,17 @@
 .store-checks label{display:flex;gap:6px;align-items:center}
 .store-form-actions{display:flex;justify-content:flex-end;gap:8px}
 .store-form-actions>button:not(.primary){border:1px solid var(--green);background:#fff;padding:10px 16px}
-.shipping-selector{padding:13px 14px;margin-bottom:14px;border:1px solid #d9e1dc;background:#f1f4f1}
-.shipping-selector>div:first-child{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
-.shipping-selector>div:first-child button{border:0;background:transparent;text-decoration:underline;font-size:11px;color:#56716a}
-.shipping-selector select{width:100%;border:1px solid #bcc7c2;background:#fff;padding:10px}
-.shipping-selector p{background:#fff;border-left:3px solid var(--orange);padding:10px 12px;margin:9px 0 0}
-.shipping-selector p b,.shipping-selector p span,.shipping-selector p small{display:block}
-.shipping-selector p span{font-size:11px;margin:5px 0}.shipping-selector p small{color:#777}
+.shipping-selector{margin-bottom:10px;border:1px solid #d9e1dc;background:#f1f4f1}
+.shipping-selector summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;cursor:pointer}
+.shipping-selector summary::-webkit-details-marker{display:none}
+.shipping-selector summary span{min-width:0}
+.shipping-selector summary strong,.shipping-selector summary small{display:block}
+.shipping-selector summary strong{font-size:11px}
+.shipping-selector summary small{margin-top:2px;color:#6e7b77;font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px}
+.shipping-selector summary b{background:var(--green);color:#fff;padding:6px 9px;font-size:10px;white-space:nowrap}
+.shipping-selector select{width:calc(100% - 22px);margin:0 11px 10px;border:1px solid #bcc7c2;background:#fff;padding:9px}
+.shipping-actions{padding:0 11px 10px;text-align:right}
+.shipping-actions button{border:0;background:transparent;text-decoration:underline;font-size:11px;color:#56716a;padding:0}
 .shipping-empty{background:#fff0e8;color:#a64a29;padding:11px;font-size:11px}
 
 @media(max-width:850px){
