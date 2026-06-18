@@ -114,6 +114,10 @@ async function fetchProducts(api) {
     return rows.map((p, index) => ({
       id: p.id,
       sku: p.sku || String(p.id),
+      itemNo: p.item_no || p.sku || String(p.id),
+      barcode: p.barcode || p.sku || String(p.id),
+      unit: p.unit || "pcs",
+      supplier: p.supplier || "",
       name: stripHtml(p.name),
       price: Number(p.price) || Number(p.regular_price) || Number(p.prices?.price / 100) || fallbackProducts[index % fallbackProducts.length].price,
       category: p.categories?.find(c => c.name !== 'All')?.name?.replace(/[▾▸]/g, '').trim() || '最新商品',
@@ -129,6 +133,9 @@ function cartItemFromProduct(product, qty) {
   return {
     id: product.id,
     sku: product.sku,
+    itemNo: product.itemNo || product.item_no || product.sku,
+    barcode: product.barcode || product.sku,
+    unit: product.unit || "pcs",
     name: product.name,
     price: product.price,
     category: product.category,
@@ -189,6 +196,103 @@ function downloadReconciliation(doc, settings) {
   link.download = `${doc.id}_發票對帳明細.csv`;
   link.click();
   URL.revokeObjectURL(link.href);
+}
+
+const code39Patterns = {
+  "0": "101001101101", "1": "110100101011", "2": "101100101011", "3": "110110010101",
+  "4": "101001101011", "5": "110100110101", "6": "101100110101", "7": "101001011011",
+  "8": "110100101101", "9": "101100101101", "A": "110101001011", "B": "101101001011",
+  "C": "110110100101", "D": "101011001011", "E": "110101100101", "F": "101101100101",
+  "G": "101010011011", "H": "110101001101", "I": "101101001101", "J": "101011001101",
+  "K": "110101010011", "L": "101101010011", "M": "110110101001", "N": "101011010011",
+  "O": "110101101001", "P": "101101101001", "Q": "101010110011", "R": "110101011001",
+  "S": "101101011001", "T": "101011011001", "U": "110010101011", "V": "100110101011",
+  "W": "110011010101", "X": "100101101011", "Y": "110010110101", "Z": "100110110101",
+  "-": "100101011011", ".": "110010101101", " ": "100110101101", "$": "100100100101",
+  "/": "100100101001", "+": "100101001001", "%": "101001001001", "*": "100101101101"
+};
+
+function escapeHtml(value = "") {
+  return String(value ?? "").replace(/[&<>"']/g, char => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]));
+}
+
+function barcodeSvg(value = "") {
+  const clean = String(value || "").toUpperCase().replace(/[^0-9A-Z .$/+%-]/g, "");
+  const encoded = `*${clean || "0000"}*`;
+  const unit = 1.35;
+  const height = 34;
+  let x = 0;
+  const bars = [];
+  for (const char of encoded) {
+    const pattern = code39Patterns[char] || code39Patterns["0"];
+    for (const bit of pattern) {
+      if (bit === "1") bars.push(`<rect x="${x.toFixed(2)}" y="0" width="${unit.toFixed(2)}" height="${height}"/>`);
+      x += unit;
+    }
+    x += unit;
+  }
+  return `<svg class="barcode" viewBox="0 0 ${x.toFixed(2)} ${height}" preserveAspectRatio="none" aria-label="${escapeHtml(clean)}">${bars.join("")}</svg><small>${escapeHtml(clean)}</small>`;
+}
+
+function productIdentity(item, productMap = {}) {
+  const product = productMap[item.productId] || productMap[Number(item.productId)] || {};
+  const sku = item.sku || product.sku || String(item.productId || "");
+  return {
+    itemNo: item.itemNo || item.item_no || product.itemNo || product.item_no || sku,
+    barcode: item.barcode || product.barcode || sku,
+    unit: item.unit || product.unit || "pcs",
+    name: item.name || product.name || "",
+    sku
+  };
+}
+
+function openPrintableDocument({ type, title, number, date, company, sourceWarehouse, storeName, destination, note, items, totals }) {
+  const rows = items.map(item => {
+    const amount = item.amount ?? (Number(item.qty || 0) * Number(item.price || 0));
+    return `<tr>
+      <td class="mono">${escapeHtml(item.itemNo)}</td>
+      <td class="barcode-cell">${barcodeSvg(item.barcode)}</td>
+      <td>${escapeHtml(item.name)}</td>
+      <td>${escapeHtml(item.unit || "pcs")}</td>
+      <td class="num">${Number(item.qty || 0).toLocaleString("zh-TW")}</td>
+      ${type === "transfer" ? `<td>${escapeHtml(item.storeName || storeName || "")}</td><td>${escapeHtml(item.destination || destination?.address || "")}</td>` : `<td class="num">${money(item.price || 0)}</td><td class="num">${money(amount)}</td>`}
+      <td>${escapeHtml(item.note || "")}</td>
+    </tr>`;
+  }).join("");
+  const transferHead = `<div class="meta meta-transfer">
+    <div><span>調撥倉位置</span><strong>${escapeHtml(sourceWarehouse || "東瑭倉")}</strong></div>
+    <div><span>門市</span><strong>${escapeHtml(storeName || destination?.storeName || company || "")}</strong></div>
+    <div><span>調撥目的地</span><strong>${escapeHtml(destination?.companyName || company || "")}</strong><p>${escapeHtml([destination?.postalCode, destination?.address].filter(Boolean).join(" "))}</p></div>
+  </div>`;
+  const regularHead = `<div class="meta">
+    <div><span>客戶名稱</span><strong>${escapeHtml(company || "")}</strong></div>
+    <div><span>單據日期</span><strong>${escapeHtml(date || "")}</strong></div>
+    <div><span>單據編號</span><strong>${escapeHtml(number || "")}</strong></div>
+  </div>`;
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(title)} ${escapeHtml(number)}</title><style>
+    *{box-sizing:border-box}body{font-family:-apple-system,BlinkMacSystemFont,"Noto Sans TC",Arial,sans-serif;margin:28px;color:#173b35}
+    .doc-head{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #173b35;padding-bottom:12px;margin-bottom:14px}
+    h1{font-family:serif;font-size:30px;margin:0}.company{font-weight:800}.doc-no{font-size:13px;color:#666;text-align:right}
+    .meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}.meta>div{border:1px solid #d9d6cd;padding:10px;min-height:58px}
+    .meta span{display:block;color:#777;font-size:11px;margin-bottom:4px}.meta strong{font-size:16px}.meta p{margin:4px 0 0;color:#555;font-size:12px}.meta-transfer{grid-template-columns:1fr 1fr 1.4fr}
+    table{width:100%;border-collapse:collapse;margin-top:12px}th{background:#efeee8;color:#56635f;text-align:left;font-size:11px;padding:8px;border:1px solid #d9d6cd}
+    td{font-size:12px;padding:8px;border:1px solid #d9d6cd;vertical-align:middle}td.num{text-align:right;font-weight:800}.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:800}
+    .barcode-cell{width:155px}.barcode{display:block;width:135px;height:34px;fill:#111}.barcode-cell small{display:block;font-size:9px;color:#333;margin-top:2px;letter-spacing:.08em}
+    .totals{display:flex;justify-content:flex-end;gap:18px;margin-top:16px;font-weight:800}.totals strong{font-size:22px;font-family:serif}.note{margin-top:14px;font-size:12px;color:#555;white-space:pre-wrap}
+    .sign{display:grid;grid-template-columns:repeat(4,1fr);gap:22px;margin-top:42px}.sign div{border-top:1px solid #333;padding-top:8px;text-align:center;color:#555}
+    @media print{body{margin:12mm}.no-print{display:none}}
+  </style></head><body>
+    <div class="doc-head"><div><div class="company">東瑭國際有限公司</div><h1>${escapeHtml(title)}</h1></div><div class="doc-no">單號：${escapeHtml(number || "")}<br/>日期：${escapeHtml(date || "")}</div></div>
+    ${type === "transfer" ? transferHead : regularHead}
+    <table><thead><tr><th>品號</th><th>條碼</th><th>品名</th><th>單位</th><th>數量</th>${type === "transfer" ? "<th>門市</th><th>調撥目的地</th>" : "<th>單價</th><th>金額</th>"}<th>備註</th></tr></thead><tbody>${rows}</tbody></table>
+    ${totals ? `<div class="totals"><span>未稅 ${money(totals.preTax || 0)}</span><span>稅額 ${money(totals.tax || 0)}</span><strong>總計 ${money(totals.total || 0)}</strong></div>` : ""}
+    ${note ? `<div class="note">備註：${escapeHtml(note)}</div>` : ""}
+    <div class="sign"><div>製表</div><div>檢貨</div><div>主管</div><div>簽收</div></div>
+    <script>window.onload=function(){window.print()}</script>
+  </body></html>`;
+  const win = window.open("", "_blank", "width=1100,height=800");
+  win.document.write(html);
+  win.document.close();
 }
 
 function authTokenFromUrl() {
@@ -285,7 +389,11 @@ function App() {
       price: row.price,
       image: row.image_url,
       badges: row.badges,
-      visible: row.visible
+      visible: row.visible,
+      itemNo: row.item_no || row.sku,
+      barcode: row.barcode || row.sku,
+      unit: row.unit || "pcs",
+      supplier: row.supplier || ""
     }]));
     const nextMovements = data.movements.map(row => ({
       id: row.id,
@@ -314,6 +422,8 @@ function App() {
       items: row.items.map(item => ({
         productId: Number(item.product_id),
         sku: item.sku,
+        itemNo: item.sku,
+        barcode: item.sku,
         name: item.product_name,
         qty: item.quantity,
         price: item.unit_price
@@ -351,6 +461,9 @@ function App() {
         orderItemId: item.order_item_id,
         productId: Number(item.product_id),
         sku: item.sku,
+        itemNo: item.sku,
+        barcode: item.sku,
+        unit: "pcs",
         name: item.product_name,
         qty: Number(item.quantity),
         note: item.note
@@ -390,6 +503,9 @@ function App() {
         id: item.id,
         productId: Number(item.product_id),
         sku: item.sku,
+        itemNo: item.sku,
+        barcode: item.sku,
+        unit: "pcs",
         name: item.product_name,
         currentStock: Number(item.current_stock || 0),
         soldQty: Number(item.sold_quantity || 0),
@@ -1655,13 +1771,13 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
 }
 
-function OrderManager({ orders, dealers, transfers = [], onUpdate, onCreateTransfer }) {
+function OrderManager({ orders, dealers, transfers = [], products = [], onUpdate, onCreateTransfer }) {
   const [status, setStatus] = useState("待處理");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(orders[0]?.id || "");
@@ -1679,6 +1795,7 @@ function OrderManager({ orders, dealers, transfers = [], onUpdate, onCreateTrans
   const selected = orders.find(order => order.id === selectedId) || visibleOrders[0] || orders[0];
   const selectedDealer = dealers.find(row => row.company_name === selected?.company);
   const selectedTransfer = transfers.find(transfer => transfer.orderNo === selected?.id);
+  const productMap = Object.fromEntries(products.map(p => [Number(p.id), p]));
   const summary = {
     pending: orders.filter(order => pendingStatuses.includes(order.status)).length,
     shipped: orders.filter(order => ["已出貨", "已完成"].includes(order.status)).length,
@@ -1724,6 +1841,29 @@ function OrderManager({ orders, dealers, transfers = [], onUpdate, onCreateTrans
   }
   const quantityLocked = selected && ["已出貨", "已完成"].includes(selected.status);
   const canEditQuantity = !quantityLocked || forceEdit;
+  function printQuote() {
+    if (!selected) return;
+    openPrintableDocument({
+      type: "quote",
+      title: "報價單",
+      number: selected.id,
+      date: selected.date,
+      company: selected.company,
+      destination: selected.shipping,
+      note: selected.adminNote,
+      items: selected.lineItems.map(item => {
+        const identity = productIdentity(item, productMap);
+        return {
+          ...identity,
+          qty: item.qty,
+          price: item.dealerPrice,
+          amount: item.lineTotal,
+          note: selected.shipping?.storeName || ""
+        };
+      }),
+      totals: { preTax: selected.preTaxAmount, tax: selected.taxAmount, total: selected.amount }
+    });
+  }
 
   return <div className="order-admin">
     <div className="order-admin-summary">
@@ -1788,11 +1928,12 @@ function OrderManager({ orders, dealers, transfers = [], onUpdate, onCreateTrans
           <label><span>物流單號</span><input value={draft.trackingNo} onChange={e => setDraft({ ...draft, trackingNo: e.target.value })} placeholder="可空白，出貨後補登" /></label>
           <label><span>內部備註</span><textarea value={draft.note} onChange={e => setDraft({ ...draft, note: e.target.value })} placeholder="例如：急件、缺貨品項、業務交辦事項" /></label>
           {quantityLocked && <div className="override-panel"><label><input type="checkbox" checked={forceEdit} onChange={e => setForceEdit(e.target.checked)} /> 最高權限強制修正已出貨／完成訂單數量</label>{forceEdit && <input value={overrideReason} onChange={e => setOverrideReason(e.target.value)} placeholder="請填寫修正原因，例如：出貨後發現數量登錄錯誤" />}</div>}
-          <div className="order-actions">
-            <select value={selected.status} onChange={e => update(e.target.value)} disabled={saving}>{orderStatusOptions.map(option => <option key={option}>{option}</option>)}</select>
-            <button className="outline" disabled={saving || !canEditQuantity} onClick={() => update()}><Save /> 儲存數量與金額</button>
-            <button className="outline" disabled={saving} onClick={() => update()}><Save /> 儲存物流／備註</button>
-            <button className="outline" disabled={saving || Boolean(selectedTransfer) || selected.status === "已取消"} onClick={convertToTransfer}><Truck /> 轉成調撥單</button>
+	          <div className="order-actions">
+	            <select value={selected.status} onChange={e => update(e.target.value)} disabled={saving}>{orderStatusOptions.map(option => <option key={option}>{option}</option>)}</select>
+	            <button className="outline" disabled={saving || !canEditQuantity} onClick={() => update()}><Save /> 儲存數量與金額</button>
+	            <button className="outline" disabled={saving} onClick={() => update()}><Save /> 儲存物流／備註</button>
+	            <button className="outline" disabled={saving} onClick={printQuote}><FileDown /> 列印報價單</button>
+	            <button className="outline" disabled={saving || Boolean(selectedTransfer) || selected.status === "已取消"} onClick={convertToTransfer}><Truck /> 轉成調撥單</button>
             {nextStatus(selected.status) !== selected.status && <button className="primary" disabled={saving} onClick={() => update(nextStatus(selected.status))}>{saving ? <RefreshCw className="spin-icon" /> : <ClipboardCheck />} 推進到「{nextStatus(selected.status)}」</button>}
           </div>
           {quantityLocked && <small className="order-inventory-note warning">已出貨或已完成的訂單修改需要最高權限與修正原因。若已建立調撥單，也請同步檢查調撥單與倉儲紀錄。</small>}
@@ -1914,6 +2055,31 @@ function TransferWarehouseManager({ transfers, warehouseMovements, products, onU
     }
   }
 
+  function printTransfer() {
+    if (!selected) return;
+    openPrintableDocument({
+      type: "transfer",
+      title: "調撥／進貨單",
+      number: selected.id,
+      date: selected.date,
+      company: selected.company,
+      sourceWarehouse: selected.warehouse,
+      storeName: selected.destination?.storeName,
+      destination: selected.destination,
+      note,
+      items: selected.items.map(item => {
+        const identity = productIdentity(item, productMap);
+        return {
+          ...identity,
+          qty: item.qty,
+          storeName: selected.destination?.storeName || selected.company,
+          destination: [selected.destination?.companyName, selected.destination?.postalCode, selected.destination?.address].filter(Boolean).join(" "),
+          note: item.note || ""
+        };
+      })
+    });
+  }
+
   const warehouseSummary = warehouseMovements.reduce((acc, row) => {
     acc.total += Number(row.qty || 0);
     if (row.qty < 0) acc.out += Math.abs(Number(row.qty));
@@ -1950,23 +2116,25 @@ function TransferWarehouseManager({ transfers, warehouseMovements, products, onU
           <div><span className="eyebrow">TRANSFER DOCUMENT</span><h2>{selected.id}</h2><p>來源採購單 {selected.orderNo || "-"} · {selected.company}</p></div>
           <span className={`order-status ${selected.status === "已作廢" ? "cancelled" : ""}`}>{selected.status}</span>
         </div>
-        <div className="order-detail-grid">
-          <section><h3>調撥目的地</h3><p><strong>{selected.destination?.storeName || "客戶倉庫"}</strong><span>{selected.destination?.companyName}</span><span>{selected.destination?.postalCode} {selected.destination?.address}</span><small>收件：{selected.destination?.recipientName || "-"}／{selected.destination?.recipientPhone || "-"}</small></p></section>
-          <section><h3>倉儲資訊</h3><p><strong>{selected.warehouse}</strong><span>調撥到：{selected.company}</span><small>操作：{selected.operator || "-"}</small></p></section>
+        <div className="transfer-top-summary">
+          <section><h3>調撥倉位置</h3><strong>{selected.warehouse}</strong></section>
+          <section><h3>門市</h3><strong>{selected.destination?.storeName || selected.company}</strong><span>{selected.destination?.companyName}</span></section>
+          <section><h3>調撥目的地</h3><strong>{selected.destination?.postalCode} {selected.destination?.address}</strong><small>收件：{selected.destination?.recipientName || "-"}／{selected.destination?.recipientPhone || "-"}</small></section>
         </div>
         <div className="order-line-table table-scroll">
-          <div className="order-line-head"><span>商品</span><span>SKU</span><span>數量</span><span>目前主檔</span><span>備註</span></div>
-          {selected.items.map(item => <div className="order-line-row" key={item.id}>
-            <span><strong>{item.name}</strong></span><span>{item.sku}</span><strong>{item.qty}</strong><span>{productMap[item.productId]?.category || "-"}</span><span>{item.note || "-"}</span>
+          <div className="order-line-head transfer-lines"><span>商品</span><span>品號</span><span>條碼</span><span>數量</span><span>門市／目的地</span></div>
+          {selected.items.map(item => <div className="order-line-row transfer-lines" key={item.id}>
+            <span><strong>{item.name}</strong></span><span>{productIdentity(item, productMap).itemNo}</span><span>{productIdentity(item, productMap).barcode}</span><strong>{item.qty}</strong><span>{selected.destination?.storeName || selected.company}</span>
           </div>)}
         </div>
         <div className="order-update-panel">
           <label><span>調撥備註</span><textarea value={note} onChange={e => setNote(e.target.value)} placeholder="例如：分批調撥、缺貨待補、倉管備註" /></label>
-          <div className="transfer-actions">
-            <button className="outline" disabled={saving || selected.status === "已確認" || selected.status === "已調撥" || selected.status === "已作廢"} onClick={() => update("已確認")}><ClipboardCheck /> 確認調撥單</button>
-            <button className="primary" disabled={saving || selected.status === "已調撥" || selected.status === "已作廢"} onClick={() => update("已調撥")}><Truck /> 已調撥出庫</button>
-            <button className="outline danger" disabled={saving || selected.status === "已作廢"} onClick={() => update("已作廢")}><Trash2 /> 作廢調撥單</button>
-          </div>
+	          <div className="transfer-actions">
+	            <button className="outline" disabled={saving || selected.status === "已確認" || selected.status === "已調撥" || selected.status === "已作廢"} onClick={() => update("已確認")}><ClipboardCheck /> 確認調撥單</button>
+	            <button className="primary" disabled={saving || selected.status === "已調撥" || selected.status === "已作廢"} onClick={() => update("已調撥")}><Truck /> 已調撥出庫</button>
+	            <button className="outline" disabled={saving} onClick={printTransfer}><FileDown /> 列印調撥／進貨單</button>
+	            <button className="outline danger" disabled={saving || selected.status === "已作廢"} onClick={() => update("已作廢")}><Trash2 /> 作廢調撥單</button>
+	          </div>
           <small className="order-inventory-note">按下「已調撥出庫」後，系統會同時建立東瑭主倉出庫紀錄，以及經銷商寄售庫存入庫紀錄，且具備防重複入庫機制。</small>
         </div>
       </article>}
@@ -1997,6 +2165,7 @@ function SalesManager({ channels, products, movements, sales, onSave }) {
   const companies = Object.entries(channels).filter(([, value]) => value.mode === "consignment").map(([name]) => name);
   const [form, setForm] = useState({ company: companies[0] || "", month: "2026-06", date: "2026-06-30", productId: products[0]?.id, qty: 1, note: "", attachment: "", file: null });
   const [uploading, setUploading] = useState(false);
+  const productMap = Object.fromEntries(products.map(p => [Number(p.id), p]));
   async function createDraft() {
     const product = products.find(p => Number(p.id) === Number(form.productId));
     const pricing = calculatePricing([{ price: product.price, qty: Number(form.qty) }], channels[form.company]);
@@ -2008,7 +2177,7 @@ function SalesManager({ channels, products, movements, sales, onSave }) {
     postScript({ action: "saveSales", ...doc }).catch(() => {});
     setUploading(false);
   }
-  function changeStatus(doc, status) {
+	  function changeStatus(doc, status) {
     let nextMovements = [...movements];
     const applied = nextMovements.some(m => m.source === doc.id && m.type === "銷貨單扣庫存");
     const reversed = nextMovements.some(m => m.source === `${doc.id}-VOID`);
@@ -2026,8 +2195,33 @@ function SalesManager({ channels, products, movements, sales, onSave }) {
     }
     onSave(nextMovements, sales.map(s => s.id === doc.id ? { ...s, status } : s));
     postScript({ action: "saveSales", ...doc, status }).catch(() => {});
+	  }
+  function printSales(doc) {
+    openPrintableDocument({
+      type: "sales",
+      title: "銷貨單",
+      number: doc.id,
+      date: doc.date,
+      company: doc.company,
+      note: doc.note,
+      items: doc.items.map(item => {
+        const identity = productIdentity(item, productMap);
+        return {
+          ...identity,
+          qty: item.qty,
+          price: item.price,
+          amount: item.qty * item.price,
+          note: item.note || ""
+        };
+      }),
+      totals: {
+        preTax: doc.preTaxAmount || 0,
+        tax: doc.taxAmount || 0,
+        total: doc.totalAmount || doc.items.reduce((sum, item) => sum + item.qty * item.price, 0)
+      }
+    });
   }
-  return <div className="sales-admin">
+	  return <div className="sales-admin">
     <div className="sales-form">
       <select value={form.company} onChange={e => setForm({ ...form, company: e.target.value })}>{companies.map(c => <option key={c}>{c}</option>)}</select>
       <input type="month" value={form.month} onChange={e => setForm({ ...form, month: e.target.value })} />
@@ -2038,8 +2232,8 @@ function SalesManager({ channels, products, movements, sales, onSave }) {
       <input value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="備註" />
       <button disabled={uploading} onClick={createDraft}><Plus /> {uploading ? "上傳中..." : "建立草稿"}</button>
     </div>
-    <div className="sales-list table-scroll"><div className="sales-head"><span>銷貨單號</span><span>經銷商／月份</span><span>明細</span><span>總金額</span><span>附件</span><span>狀態</span></div>{sales.map(doc => <div className="sales-row" key={doc.id}><strong>{doc.id}</strong><span>{doc.company}<small>{doc.month}</small></span><span>{doc.items.reduce((s, i) => s + i.qty, 0)} 件</span><strong>{money(doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><span>{doc.attachment || "-"}</span><select value={doc.status} onChange={e => changeStatus(doc, e.target.value)}><option>草稿</option><option>已確認</option><option>已請款</option><option>已作廢</option></select></div>)}</div>
-  </div>;
+	    <div className="sales-list table-scroll"><div className="sales-head"><span>銷貨單號</span><span>經銷商／月份</span><span>明細</span><span>總金額</span><span>附件</span><span>狀態／列印</span></div>{sales.map(doc => <div className="sales-row" key={doc.id}><strong>{doc.id}</strong><span>{doc.company}<small>{doc.month}</small></span><span>{doc.items.reduce((s, i) => s + i.qty, 0)} 件</span><strong>{money(doc.items.reduce((s, i) => s + i.qty * i.price, 0))}</strong><span>{doc.attachment || "-"}</span><span className="sales-row-actions"><select value={doc.status} onChange={e => changeStatus(doc, e.target.value)}><option>草稿</option><option>已確認</option><option>已請款</option><option>已作廢</option></select><button onClick={() => printSales(doc)}><FileDown /> 列印</button></span></div>)}</div>
+	  </div>;
 }
 
 function StockAdjustment({ channels, products, movements, sales, onSave }) {

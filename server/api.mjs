@@ -66,7 +66,11 @@ const reportStatuses = ["草稿", "待審核", "已退回", "已審核", "已轉
 async function bootstrap(user) {
   const dealer = await dealerFor(user);
   const content = await db.sql`SELECT value FROM app_settings WHERE key = 'content'`;
-  const products = await db.sql`SELECT * FROM product_overrides ORDER BY product_id`;
+  const products = await db.sql`
+    SELECT o.*, pm.item_no, pm.barcode, pm.unit, pm.supplier, pm.woo_permalink
+    FROM product_overrides o
+    LEFT JOIN product_master pm ON pm.woo_product_id=o.product_id OR pm.item_no=o.sku OR pm.barcode=o.sku
+    ORDER BY o.product_id`;
   const dealers = isAdmin(user)
     ? await db.sql`SELECT * FROM dealers ORDER BY company_name`
     : [dealer];
@@ -1003,7 +1007,7 @@ async function updateWooCommerceProduct(user, body) {
 async function fetchWooCommerceProducts(user, req) {
   const cached = await db.sql`
     SELECT c.product_id, c.payload, o.visible AS override_visible,
-      pm.dealer_visible, pm.active AS master_active
+      pm.item_no, pm.barcode, pm.unit, pm.supplier, pm.dealer_visible, pm.active AS master_active
     FROM woocommerce_product_cache c
     LEFT JOIN product_overrides o ON o.product_id=c.product_id
     LEFT JOIN product_master pm ON pm.woo_product_id=c.product_id
@@ -1017,6 +1021,10 @@ async function fetchWooCommerceProducts(user, req) {
   });
   return json(rows.map(row => ({
     ...row.payload,
+    item_no: row.item_no || row.payload?.sku || String(row.product_id),
+    barcode: row.barcode || '',
+    unit: row.unit || '',
+    supplier: row.supplier || '',
     dealer_visible: row.dealer_visible !== false,
     visible: row.override_visible !== false
   })));
