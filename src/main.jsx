@@ -1776,21 +1776,21 @@ function AdminDashboard({ orders, transfers, reports, sales, movements, products
       <strong>{new Date().toLocaleDateString("zh-TW")}</strong>
     </div>
     <div className="dashboard-cards">
-      <button onClick={() => onGo("orders")}><ClipboardCheck /><span>待處理採購單</span><strong>{pendingOrders.length}</strong><small>確認、改數量、列印報價或轉調撥</small></button>
-      <button onClick={() => onGo("transfers")}><Truck /><span>待調撥單</span><strong>{readyTransfers.length}</strong><small>確認調撥與主倉出庫</small></button>
-      <button onClick={() => onGo("reports")}><FileText /><span>寄售回報待審</span><strong>{pendingReports.length}</strong><small>{approvedReports.length} 筆已審核待轉銷貨單</small></button>
+      <button onClick={() => onGo("orders", { status: "待處理", id: pendingOrders[0]?.id })}><ClipboardCheck /><span>待處理採購單</span><strong>{pendingOrders.length}</strong><small>確認、改數量、列印報價或轉調撥</small></button>
+      <button onClick={() => onGo("transfers", { status: "草稿", id: readyTransfers[0]?.id })}><Truck /><span>待調撥單</span><strong>{readyTransfers.length}</strong><small>確認調撥與主倉出庫</small></button>
+      <button onClick={() => onGo("reports", { status: "待審核", id: pendingReports[0]?.id })}><FileText /><span>寄售回報待審</span><strong>{pendingReports.length}</strong><small>{approvedReports.length} 筆已審核待轉銷貨單</small></button>
       <button onClick={() => onGo("inventory")}><Warehouse /><span>低庫存品項</span><strong>{lowStockRows.length}</strong><small>查看經銷商寄售庫存水位</small></button>
       <button onClick={() => onGo("sales")}><Database /><span>本月銷貨金額</span><strong>{money(monthSales)}</strong><small>查看銷貨單與請款資料</small></button>
       <button onClick={() => onGo("accounts")}><UserRound /><span>經銷商帳號</span><strong>{dealers.length}</strong><small>管理帳號、模式與門市資料</small></button>
     </div>
     <div className="dashboard-panels">
       <section>
-        <div className="panel-title"><h3>最新採購單</h3><button onClick={() => onGo("orders")}>全部採購單 <ChevronRight /></button></div>
-        {latestOrders.length ? latestOrders.map(order => <button className="dashboard-row" key={order.id} onClick={() => onGo("orders")}><span><strong>{order.id}</strong><small>{order.company} · {order.date}</small></span><b className={`order-status ${order.status === "已取消" ? "cancelled" : ""}`}>{order.status}</b><em>{money(order.amount)}</em></button>) : <div className="document-empty compact">目前沒有採購單</div>}
+        <div className="panel-title"><h3>最新採購單</h3><button onClick={() => onGo("orders", { status: "全部" })}>全部採購單 <ChevronRight /></button></div>
+        {latestOrders.length ? latestOrders.map(order => <button className="dashboard-row" key={order.id} onClick={() => onGo("orders", { status: "全部", id: order.id })}><span><strong>{order.id}</strong><small>{order.company} · {order.date}</small></span><b className={`order-status ${order.status === "已取消" ? "cancelled" : ""}`}>{order.status}</b><em>{money(order.amount)}</em></button>) : <div className="document-empty compact">目前沒有採購單</div>}
       </section>
       <section>
-        <div className="panel-title"><h3>寄售回報追蹤</h3><button onClick={() => onGo("reports")}>前往審核 <ChevronRight /></button></div>
-        {urgentReports.length ? urgentReports.map(report => <button className="dashboard-row" key={report.id} onClick={() => onGo("reports")}><span><strong>{report.id}</strong><small>{report.company} · {report.periodStart} 至 {report.periodEnd}</small></span><b className={`order-status ${report.status === "已審核" ? "" : "cancelled"}`}>{report.status}</b><em>{money(report.totalAmount)}</em></button>) : <div className="document-empty compact">目前沒有待追蹤回報</div>}
+        <div className="panel-title"><h3>寄售回報追蹤</h3><button onClick={() => onGo("reports", { status: "待審核" })}>前往審核 <ChevronRight /></button></div>
+        {urgentReports.length ? urgentReports.map(report => <button className="dashboard-row" key={report.id} onClick={() => onGo("reports", { status: report.status, id: report.id })}><span><strong>{report.id}</strong><small>{report.company} · {report.periodStart} 至 {report.periodEnd}</small></span><b className={`order-status ${report.status === "已審核" ? "" : "cancelled"}`}>{report.status}</b><em>{money(report.totalAmount)}</em></button>) : <div className="document-empty compact">目前沒有待追蹤回報</div>}
       </section>
     </div>
   </div>;
@@ -1798,9 +1798,15 @@ function AdminDashboard({ orders, transfers, reports, sales, movements, products
 
 function AdminPanel({ api, content, products, productEdits, channels, dealers, orders, transfers, warehouseMovements, movements, sales, consignmentReports, onSave, onSaveInventory, onCreateDealerAccount, onUpdateOrder, onCreateTransfer, onUpdateTransfer, onReviewConsignmentReport, onConvertConsignmentReport }) {
   const [tab, setTab] = useState("dashboard");
+  const [focus, setFocus] = useState({});
   const [draft, setDraft] = useState(content);
   const [edits, setEdits] = useState(productEdits);
   const [channelDraft, setChannelDraft] = useState(channels);
+
+  function goTab(nextTab, nextFocus = {}) {
+    setFocus(nextFocus);
+    setTab(nextTab);
+  }
 
   function updateProduct(product, field, value) {
     setEdits(prev => ({ ...prev, [product.id]: { ...(prev[product.id] || {}), [field]: value } }));
@@ -1811,27 +1817,27 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
     <div className="admin-notice">帳號、內容、訂單與正式營運資料由目前的 GCP 伺服器與 PostgreSQL 資料庫集中管理。</div>
     <div className="admin-layout">
       <aside className="admin-menu">
-        <button className={tab === "dashboard" ? "active" : ""} onClick={() => setTab("dashboard")}><LayoutDashboard /> 儀錶板</button>
+        <button className={tab === "dashboard" ? "active" : ""} onClick={() => goTab("dashboard")}><LayoutDashboard /> 儀錶板</button>
         <span>營運處理</span>
-        <button className={tab === "orders" ? "active" : ""} onClick={() => setTab("orders")}><ClipboardCheck /> 採購單處理</button>
-        <button className={tab === "transfers" ? "active" : ""} onClick={() => setTab("transfers")}><Truck /> 調撥／倉儲</button>
-        <button className={tab === "reports" ? "active" : ""} onClick={() => setTab("reports")}><ClipboardCheck /> 寄售回報審核</button>
-        <button className={tab === "sales" ? "active" : ""} onClick={() => setTab("sales")}><FileText /> 銷貨單</button>
-        <button className={tab === "import" ? "active" : ""} onClick={() => setTab("import")}><Upload /> Excel 正式銷貨單</button>
+        <button className={tab === "orders" ? "active" : ""} onClick={() => goTab("orders")}><ClipboardCheck /> 採購單處理</button>
+        <button className={tab === "transfers" ? "active" : ""} onClick={() => goTab("transfers")}><Truck /> 調撥／倉儲</button>
+        <button className={tab === "reports" ? "active" : ""} onClick={() => goTab("reports")}><ClipboardCheck /> 寄售回報審核</button>
+        <button className={tab === "sales" ? "active" : ""} onClick={() => goTab("sales")}><FileText /> 銷貨單</button>
+        <button className={tab === "import" ? "active" : ""} onClick={() => goTab("import")}><Upload /> Excel 正式銷貨單</button>
         <span>商品與庫存</span>
-        <button className={tab === "masterProducts" ? "active" : ""} onClick={() => setTab("masterProducts")}><Database /> 商品資料庫</button>
-        <button className={tab === "products" ? "active" : ""} onClick={() => setTab("products")}><ShoppingBag /> 官網商品同步</button>
-        <button className={tab === "inventory" ? "active" : ""} onClick={() => setTab("inventory")}><Warehouse /> 寄售庫存</button>
-        <button className={tab === "adjust" ? "active" : ""} onClick={() => setTab("adjust")}><SlidersHorizontal /> 盤點修正</button>
-        <button className={tab === "history" ? "active" : ""} onClick={() => setTab("history")}><History /> 異動紀錄</button>
+        <button className={tab === "masterProducts" ? "active" : ""} onClick={() => goTab("masterProducts")}><Database /> 商品資料庫</button>
+        <button className={tab === "products" ? "active" : ""} onClick={() => goTab("products")}><ShoppingBag /> 官網商品同步</button>
+        <button className={tab === "inventory" ? "active" : ""} onClick={() => goTab("inventory")}><Warehouse /> 寄售庫存</button>
+        <button className={tab === "adjust" ? "active" : ""} onClick={() => goTab("adjust")}><SlidersHorizontal /> 盤點修正</button>
+        <button className={tab === "history" ? "active" : ""} onClick={() => goTab("history")}><History /> 異動紀錄</button>
         <span>經銷商與系統</span>
-        <button className={tab === "accounts" ? "active" : ""} onClick={() => setTab("accounts")}><UserRound /> 經銷商帳號</button>
-        <button className={tab === "channels" ? "active" : ""} onClick={() => setTab("channels")}><Store /> 通路設定</button>
-        <button className={tab === "content" ? "active" : ""} onClick={() => setTab("content")}><LayoutDashboard /> 首頁內容</button>
-        <button className={tab === "api" ? "active" : ""} onClick={() => setTab("api")}><Settings /> API 設定</button>
+        <button className={tab === "accounts" ? "active" : ""} onClick={() => goTab("accounts")}><UserRound /> 經銷商帳號</button>
+        <button className={tab === "channels" ? "active" : ""} onClick={() => goTab("channels")}><Store /> 通路設定</button>
+        <button className={tab === "content" ? "active" : ""} onClick={() => goTab("content")}><LayoutDashboard /> 首頁內容</button>
+        <button className={tab === "api" ? "active" : ""} onClick={() => goTab("api")}><Settings /> API 設定</button>
       </aside>
       <section className="admin-content">
-        {tab === "dashboard" ? <AdminDashboard orders={orders} transfers={transfers} reports={consignmentReports} sales={sales} movements={movements} products={products} dealers={dealers} onGo={setTab} /> : tab === "api" ? <WooCommerceSettings api={api} /> : tab === "content" ? <div className="admin-form">
+        {tab === "dashboard" ? <AdminDashboard orders={orders} transfers={transfers} reports={consignmentReports} sales={sales} movements={movements} products={products} dealers={dealers} onGo={goTab} /> : tab === "api" ? <WooCommerceSettings api={api} /> : tab === "content" ? <div className="admin-form">
           <AdminField label="首頁主標題" value={draft.heroTitle} onChange={v => setDraft({ ...draft, heroTitle: v })} />
           <AdminField label="首頁介紹文字" value={draft.heroText} onChange={v => setDraft({ ...draft, heroText: v })} area />
           <AdminField label="首頁主圖片網址" value={draft.heroImage} onChange={v => setDraft({ ...draft, heroImage: v })} icon />
@@ -1846,13 +1852,13 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
 }
 
-function OrderManager({ orders, dealers, transfers = [], products = [], onUpdate, onCreateTransfer }) {
+function OrderManager({ orders, dealers, transfers = [], products = [], focus = {}, onUpdate, onCreateTransfer }) {
   const [status, setStatus] = useState("待處理");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(orders[0]?.id || "");
@@ -1876,6 +1882,11 @@ function OrderManager({ orders, dealers, transfers = [], products = [], onUpdate
     shipped: orders.filter(order => ["已出貨", "已完成"].includes(order.status)).length,
     total: orders.reduce((sum, order) => sum + Number(order.amount || 0), 0)
   };
+
+  useEffect(() => {
+    if (focus.status) setStatus(focus.status);
+    if (focus.id) setSelectedId(focus.id);
+  }, [focus.id, focus.status]);
 
   useEffect(() => {
     if (selected) setDraft({ trackingNo: selected.trackingNo || "", note: selected.adminNote || "" });
@@ -2103,7 +2114,7 @@ const stockOf = (movements, company, productId) => movements.filter(m => m.compa
 const today = () => new Date().toISOString().slice(0, 10).replaceAll("-", "/");
 const stockAlertKey = company => `dt-stock-alerts-${encodeURIComponent(company || "")}`;
 
-function TransferWarehouseManager({ transfers, warehouseMovements, products, onUpdateTransfer }) {
+function TransferWarehouseManager({ transfers, warehouseMovements, products, focus = {}, onUpdateTransfer }) {
   const [status, setStatus] = useState("全部");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(transfers[0]?.id || "");
@@ -2116,6 +2127,11 @@ function TransferWarehouseManager({ transfers, warehouseMovements, products, onU
     return matchStatus && haystack.includes(query.toLowerCase());
   });
   const selected = transfers.find(transfer => transfer.id === selectedId) || filtered[0] || transfers[0];
+
+  useEffect(() => {
+    if (focus.status) setStatus(focus.status);
+    if (focus.id) setSelectedId(focus.id);
+  }, [focus.id, focus.status]);
 
   useEffect(() => {
     if (selected) setNote(selected.note || "");
@@ -2526,7 +2542,7 @@ function dealerPriceWithSettings(price, settings) {
   return pricing.lines[0]?.unitPrice || 0;
 }
 
-function ConsignmentReportAdmin({ reports, movements, onReview, onConvert }) {
+function ConsignmentReportAdmin({ reports, movements, focus = {}, onReview, onConvert }) {
   const [status, setStatus] = useState("待審核");
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState(reports[0]?.id || "");
@@ -2539,6 +2555,11 @@ function ConsignmentReportAdmin({ reports, movements, onReview, onConvert }) {
   });
   const selected = reports.find(report => report.id === selectedId) || visible[0] || reports[0];
   const hasStockIssue = selected?.items?.some(item => item.soldQty > stockOf(movements, selected.company, item.productId));
+
+  useEffect(() => {
+    if (focus.status) setStatus(focus.status);
+    if (focus.id) setSelectedId(focus.id);
+  }, [focus.id, focus.status]);
 
   async function review(nextStatus) {
     if (!selected || saving) return;
