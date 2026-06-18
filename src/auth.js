@@ -1,11 +1,20 @@
 // Local JWT-based authentication client replacing @netlify/identity
+async function fetchWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 
 export async function getUser() {
   const token = localStorage.getItem("dt_token");
   if (!token) return null;
 
   try {
-    const res = await fetch("/api/auth/me", {
+    const res = await fetchWithTimeout("/api/auth/me", {
       headers: {
         "Authorization": `Bearer ${token}`
       }
@@ -32,7 +41,7 @@ export async function getUser() {
 }
 
 export async function login(email, password) {
-  const res = await fetch("/api/auth/login", {
+  const res = await fetchWithTimeout("/api/auth/login", {
     method: "POST",
     headers: {
       "Content-Type": "application/json"

@@ -347,22 +347,42 @@ function App() {
     handleAuthCallback().then(result => {
       if (result?.type === "invite" || result?.type === "recovery") setAuthCallback(result);
     }).catch(() => {}).finally(async () => {
-      const identityUser = await getUser().catch(() => null);
-      if (identityUser) await loadAccount();
-      setAuthLoading(false);
+      try {
+        const identityUser = await getUser().catch(() => null);
+        if (identityUser) await loadAccount();
+      } catch (error) {
+        console.error("Initial account load failed:", error);
+        notify(error.message || "登入狀態確認逾時，請重新登入");
+        await identityLogout();
+        setUser(null);
+      } finally {
+        setAuthLoading(false);
+      }
     });
   }, []);
 
   async function api(route, options = {}) {
     const token = localStorage.getItem("dt_token");
-    const response = await fetch(`/api/${route}`, {
-      ...options,
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { "Authorization": `Bearer ${token}` } : {}),
-        ...(options.headers || {})
-      }
-    });
+    const { timeoutMs = 25000, ...fetchOptions } = options;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    let response;
+    try {
+      response = await fetch(`/api/${route}`, {
+        ...fetchOptions,
+        signal: controller.signal,
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { "Authorization": `Bearer ${token}` } : {}),
+          ...(fetchOptions.headers || {})
+        }
+      });
+    } catch (error) {
+      if (error.name === "AbortError") throw new Error("伺服器回應逾時，請稍後再試");
+      throw error;
+    } finally {
+      window.clearTimeout(timer);
+    }
     const text = await response.text();
     let result;
     try {

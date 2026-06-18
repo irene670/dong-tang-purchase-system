@@ -77,11 +77,17 @@ async function bootstrap(user) {
   const orders = isAdmin(user)
     ? await db.sql`SELECT o.*, d.company_name FROM orders o JOIN dealers d ON d.id=o.dealer_id ORDER BY o.created_at DESC`
     : await db.sql`SELECT * FROM orders WHERE dealer_id=${dealer.id} ORDER BY created_at DESC`;
-  const orderItems = await db.sql`SELECT * FROM order_items ORDER BY id`;
+  const orderIds = orders.map(row => row.id);
+  const orderItems = orderIds.length
+    ? await db.sql`SELECT * FROM order_items WHERE order_id = ANY(${orderIds}::uuid[]) ORDER BY id`
+    : [];
   const sales = isAdmin(user)
     ? await db.sql`SELECT s.*, d.company_name FROM sales_documents s JOIN dealers d ON d.id=s.dealer_id ORDER BY s.sales_date DESC`
     : await db.sql`SELECT * FROM sales_documents WHERE dealer_id=${dealer.id} ORDER BY sales_date DESC`;
-  const salesItems = await db.sql`SELECT * FROM sales_document_items ORDER BY id`;
+  const salesIds = sales.map(row => row.id);
+  const salesItems = salesIds.length
+    ? await db.sql`SELECT * FROM sales_document_items WHERE sales_document_id = ANY(${salesIds}::uuid[]) ORDER BY id`
+    : [];
   const movements = isAdmin(user)
     ? await db.sql`SELECT m.*, d.company_name FROM inventory_movements m JOIN dealers d ON d.id=m.dealer_id ORDER BY m.created_at`
     : await db.sql`SELECT * FROM inventory_movements WHERE dealer_id=${dealer.id} ORDER BY created_at`;
@@ -91,21 +97,25 @@ async function bootstrap(user) {
   const transfers = isAdmin(user)
     ? await db.sql`SELECT t.*, d.company_name, d.mode, o.order_no FROM transfer_documents t JOIN dealers d ON d.id=t.dealer_id LEFT JOIN orders o ON o.id=t.order_id ORDER BY t.created_at DESC`
     : await db.sql`SELECT t.*, o.order_no FROM transfer_documents t LEFT JOIN orders o ON o.id=t.order_id WHERE t.dealer_id=${dealer.id} ORDER BY t.created_at DESC`;
-  const transferItems = await db.sql`SELECT * FROM transfer_document_items ORDER BY id`;
+  const transferIds = transfers.map(row => row.id);
+  const transferItems = transferIds.length
+    ? await db.sql`SELECT * FROM transfer_document_items WHERE transfer_document_id = ANY(${transferIds}::uuid[]) ORDER BY id`
+    : [];
   const warehouseMovements = isAdmin(user)
     ? await db.sql`SELECT w.*, d.company_name FROM warehouse_movements w LEFT JOIN dealers d ON d.id=w.dealer_id ORDER BY w.created_at DESC`
     : [];
   const reports = isAdmin(user)
     ? await db.sql`SELECT r.*, d.company_name, s.sales_no FROM consignment_sales_reports r JOIN dealers d ON d.id=r.dealer_id LEFT JOIN sales_documents s ON s.id=r.sales_document_id ORDER BY r.created_at DESC`
     : await db.sql`SELECT r.*, s.sales_no FROM consignment_sales_reports r LEFT JOIN sales_documents s ON s.id=r.sales_document_id WHERE r.dealer_id=${dealer.id} ORDER BY r.created_at DESC`;
-  const reportItems = reports.length
-    ? await db.sql`SELECT * FROM consignment_sales_report_items ORDER BY id`
+  const reportIds = reports.map(row => row.id);
+  const reportItems = reportIds.length
+    ? await db.sql`SELECT * FROM consignment_sales_report_items WHERE report_id = ANY(${reportIds}::uuid[]) ORDER BY id`
     : [];
-  const reportAttachments = reports.length
-    ? await db.sql`SELECT * FROM consignment_sales_report_attachments ORDER BY created_at`
+  const reportAttachments = reportIds.length
+    ? await db.sql`SELECT * FROM consignment_sales_report_attachments WHERE report_id = ANY(${reportIds}::uuid[]) ORDER BY created_at`
     : [];
-  const reportLogs = reports.length
-    ? await db.sql`SELECT * FROM consignment_sales_report_logs ORDER BY created_at`
+  const reportLogs = reportIds.length
+    ? await db.sql`SELECT * FROM consignment_sales_report_logs WHERE report_id = ANY(${reportIds}::uuid[]) ORDER BY created_at`
     : [];
   return {
     user: { id: user.id, email: user.email, name: user.name, roles: user.roles },
