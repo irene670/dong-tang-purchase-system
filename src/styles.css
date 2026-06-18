@@ -535,6 +535,59 @@
 .woo-btn-link{text-decoration:none;color:var(--green);font-size:12px;font-weight:700;border:1px solid var(--green);padding:9px 14px;margin-left:auto}
 .woo-btn-link:hover{background:var(--green);color:#fff}
 
+.warehouse-stock-admin{display:grid;gap:20px}
+.warehouse-hero{background:#fff;border:1px solid var(--line);padding:24px;display:flex;align-items:flex-start;justify-content:space-between;gap:18px}
+.warehouse-hero h2{font-family:"Shippori Mincho";font-size:34px;margin:5px 0}
+.warehouse-hero p{margin:0;color:#737d79;line-height:1.7;max-width:720px}
+.warehouse-hero .outline{border:1px solid var(--green);background:#fff;color:var(--green);padding:12px 18px;font-weight:800;display:flex;align-items:center;gap:8px}
+.warehouse-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.warehouse-kpis button{border:1px solid var(--line);background:#fff;text-align:left;padding:18px;display:grid;gap:7px;transition:.15s}
+.warehouse-kpis button:hover{box-shadow:0 12px 28px rgba(23,59,53,.08);transform:translateY(-2px)}
+.warehouse-kpis svg{color:var(--orange);width:22px;height:22px}
+.warehouse-kpis span{font-size:11px;color:#73807c;font-weight:800}
+.warehouse-kpis strong{font-family:"Shippori Mincho";font-size:30px}
+.warehouse-kpis small{color:#7a8581}
+.warehouse-layout{display:grid;grid-template-columns:minmax(0,1.45fr) 430px;gap:18px;align-items:start}
+.warehouse-list-card,.warehouse-detail-card,.warehouse-bottom-grid>div{background:#fff;border:1px solid var(--line)}
+.warehouse-toolbar{display:grid;grid-template-columns:1fr;gap:12px;padding:16px;border-bottom:1px solid var(--line)}
+.warehouse-table{max-height:720px;overflow:auto}
+.warehouse-table-head,.warehouse-product-row{display:grid;grid-template-columns:120px minmax(240px,1fr) 160px 100px 100px 100px;gap:12px;align-items:center}
+.warehouse-table-head{position:sticky;top:0;z-index:1;background:#efeee8;color:#68716d;font-size:12px;font-weight:800;padding:12px 16px}
+.warehouse-product-row{width:100%;border:0;border-bottom:1px solid var(--line);background:#fff;text-align:left;padding:14px 16px}
+.warehouse-product-row:hover,.warehouse-product-row.active{background:#f7f5ef}
+.warehouse-product-row.active{box-shadow:inset 4px 0 0 var(--orange)}
+.warehouse-product-row span{min-width:0}
+.warehouse-product-row strong,.warehouse-product-row b{display:block;color:var(--green)}
+.warehouse-product-row small{display:block;color:#8b938f;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.warehouse-product-row .ok,.warehouse-detail-head .ok,.warehouse-history-row .ok,.warehouse-movement-row .ok{color:#198754}
+.warehouse-product-row .warning,.warehouse-detail-head .warning{color:#d66a2c}
+.warehouse-product-row .danger,.warehouse-detail-head .danger,.warehouse-history-row .danger,.warehouse-movement-row .danger{color:#c4342d}
+.warehouse-product-row span:nth-child(4),.warehouse-product-row span:nth-child(5),.warehouse-product-row span:nth-child(6){font-family:"Shippori Mincho";font-size:22px;font-weight:900}
+.warehouse-detail-card{padding:20px;position:sticky;top:14px;display:grid;gap:18px}
+.warehouse-detail-head{display:flex;justify-content:space-between;gap:14px;border-bottom:1px solid var(--line);padding-bottom:16px}
+.warehouse-detail-head h3{font-family:"Shippori Mincho";font-size:28px;margin:4px 0}
+.warehouse-detail-head p{margin:0;color:#77817d}
+.warehouse-detail-head>strong{font-family:"Shippori Mincho";font-size:42px;line-height:1}
+.warehouse-info-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.warehouse-info-grid span{background:#f8f7f2;border:1px solid #eee9df;padding:11px;color:#6f7975;font-size:12px;font-weight:800}
+.warehouse-info-grid b{display:block;color:var(--green);font-size:17px;margin-top:5px}
+.warehouse-action-box{border:1px solid var(--line);padding:16px;background:#fbfaf6;display:grid;gap:12px}
+.warehouse-action-box h4,.warehouse-history h4{font-family:"Shippori Mincho";font-size:22px;margin:0}
+.warehouse-action-box label{display:grid;gap:6px;color:#53605c;font-size:12px;font-weight:800}
+.warehouse-action-box select,.warehouse-action-box input,.warehouse-action-box textarea{width:100%;border:1px solid #d5d2cb;background:#fff;padding:11px;font-size:15px}
+.warehouse-action-box textarea{min-height:74px;resize:vertical}
+.warehouse-action-buttons .primary{width:100%;justify-content:center;margin:0}
+.warehouse-history{display:grid;gap:10px}
+.warehouse-history-row{border-bottom:1px solid var(--line);padding:10px 0}
+.warehouse-history-row span{display:flex;justify-content:space-between;gap:10px;font-weight:800}
+.warehouse-history-row small{display:block;color:#7b8581;line-height:1.5;margin-top:4px}
+.warehouse-bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.warehouse-bottom-grid>div{padding:18px}
+.warehouse-movement-list{display:grid;gap:0}
+.warehouse-movement-row{display:grid;grid-template-columns:minmax(180px,1fr) 70px 110px 160px;gap:12px;align-items:center;border-top:1px solid var(--line);padding:12px 0}
+.warehouse-movement-row strong{display:block;color:var(--green)}
+.warehouse-movement-row small{color:#7d8581;line-height:1.5}
+
 /* === Workflow UX polish === */
 .partner-action-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:18px 0 30px}
 .partner-action-grid button{border:1px solid var(--line);background:#fff;padding:22px;text-align:left;display:grid;gap:8px;transition:.15s}
@@ -587,7 +640,7 @@
 .sales-row-actions svg{width:14px}
 
 @media(max-width:850px){
-  .partner-action-grid,.dashboard-cards,.dashboard-panels,.document-kpis,.consignment-kpis{grid-template-columns:1fr}
+  .partner-action-grid,.dashboard-cards,.dashboard-panels,.document-kpis,.consignment-kpis,.warehouse-kpis,.warehouse-layout,.warehouse-bottom-grid{grid-template-columns:1fr}
   .dashboard-hero{display:block}
   .dashboard-hero h2{font-size:28px}
   .admin-menu{overflow:auto;align-items:stretch}
@@ -595,4 +648,9 @@
   .purchase-list-status,.next-step-banner{grid-template-columns:1fr}
   .next-step-banner .primary{width:100%}
   .dashboard-row{grid-template-columns:1fr}
+  .warehouse-hero{display:block}
+  .warehouse-detail-card{position:static}
+  .warehouse-table{overflow:auto}
+  .warehouse-table-head,.warehouse-product-row{min-width:760px}
+  .warehouse-movement-row{grid-template-columns:1fr}
 }

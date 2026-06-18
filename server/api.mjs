@@ -156,7 +156,7 @@ async function bootstrap(user) {
 const productMasterFields = [
   "item_no", "name", "unit", "category", "retail_price", "sale_price", "standard_cost",
   "safety_stock", "stock_quantity", "barcode", "unit_weight", "supplier", "description",
-  "woo_product_id", "woo_sku", "woo_permalink", "dealer_visible", "active", "source"
+  "storage_location", "woo_product_id", "woo_sku", "woo_permalink", "dealer_visible", "active", "source"
 ];
 
 function toNumber(value, fallback = 0) {
@@ -181,6 +181,7 @@ function normalizeMasterProduct(row = {}, source = "manual") {
     unit_weight: toNumber(row.unit_weight ?? row.unitWeight ?? row["單位淨重"]),
     supplier: String(row.supplier ?? row["主供應商"] ?? "").trim(),
     description: String(row.description ?? row["商品描述"] ?? "").trim(),
+    storage_location: String(row.storage_location ?? row.storageLocation ?? row["儲位"] ?? "").trim(),
     woo_product_id: row.woo_product_id || row.wooProductId ? Number(row.woo_product_id ?? row.wooProductId) : null,
     woo_sku: String(row.woo_sku ?? row.wooSku ?? "").trim(),
     woo_permalink: String(row.woo_permalink ?? row.wooPermalink ?? "").trim(),
@@ -249,12 +250,12 @@ async function saveMasterProducts(user, body) {
       INSERT INTO product_master
         (item_no, name, unit, category, retail_price, sale_price, standard_cost, safety_stock,
           stock_quantity, barcode, unit_weight, supplier, description, woo_product_id, woo_sku,
-          woo_permalink, dealer_visible, active, source, updated_at)
+          woo_permalink, dealer_visible, active, source, storage_location, updated_at)
       VALUES (${product.item_no}, ${product.name}, ${product.unit}, ${product.category},
         ${product.retail_price}, ${product.sale_price}, ${product.standard_cost}, ${product.safety_stock},
         ${product.stock_quantity}, ${product.barcode}, ${product.unit_weight}, ${product.supplier},
         ${product.description}, ${product.woo_product_id}, ${product.woo_sku}, ${product.woo_permalink},
-        ${product.dealer_visible}, ${product.active}, ${product.source}, now())
+        ${product.dealer_visible}, ${product.active}, ${product.source}, ${product.storage_location}, now())
       ON CONFLICT (item_no) DO UPDATE SET name=EXCLUDED.name, unit=EXCLUDED.unit,
         category=EXCLUDED.category, retail_price=EXCLUDED.retail_price, sale_price=EXCLUDED.sale_price,
         standard_cost=EXCLUDED.standard_cost, safety_stock=EXCLUDED.safety_stock,
@@ -264,7 +265,7 @@ async function saveMasterProducts(user, body) {
         woo_sku=COALESCE(NULLIF(EXCLUDED.woo_sku, ''), product_master.woo_sku),
         woo_permalink=COALESCE(NULLIF(EXCLUDED.woo_permalink, ''), product_master.woo_permalink),
         dealer_visible=EXCLUDED.dealer_visible, active=EXCLUDED.active,
-        source=EXCLUDED.source, updated_at=now()`;
+        source=EXCLUDED.source, storage_location=EXCLUDED.storage_location, updated_at=now()`;
     saved += 1;
   }
   if (body.fileName) {
@@ -283,6 +284,117 @@ async function productMasterAction(user, body) {
   }
   if (body.action === "showSyncedWooProducts") return showSyncedWooProducts(user);
   return saveMasterProducts(user, body);
+}
+
+async function listWarehouseInventory(user) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const products = await db.sql`
+    SELECT pm.*,
+      COALESCE(SUM(wm.quantity), 0)::integer AS movement_quantity,
+      (pm.stock_quantity + COALESCE(SUM(wm.quantity), 0))::integer AS current_stock,
+      COUNT(wm.id)::integer AS movement_count,
+      MAX(wm.created_at) AS last_movement_at
+    FROM product_master pm
+    LEFT JOIN warehouse_movements wm
+      ON wm.product_master_id = pm.id
+      OR (pm.woo_product_id IS NOT NULL AND wm.product_id = pm.woo_product_id)
+    GROUP BY pm.id
+    ORDER BY pm.item_no`;
+  const movements = await db.sql`
+    SELECT wm.*, pm.item_no, pm.name AS product_name, pm.barcode, pm.storage_location
+    FROM warehouse_movements wm
+    LEFT JOIN product_master pm
+      ON wm.product_master_id = pm.id
+      OR (pm.woo_product_id IS NOT NULL AND wm.product_id = pm.woo_product_id)
+    ORDER BY wm.created_at DESC
+    LIMIT 300`;
+  const stockCounts = await db.sql`
+    SELECT c.*,
+      COUNT(i.id)::integer AS item_count,
+      COALESCE(SUM(ABS(i.difference)), 0)::integer AS total_difference
+    FROM warehouse_stock_counts c
+    LEFT JOIN warehouse_stock_count_items i ON i.stock_count_id = c.id
+    GROUP BY c.id
+    ORDER BY c.created_at DESC
+    LIMIT 80`;
+  return json({ ok: true, products, movements, stockCounts });
+}
+
+async function warehouseProductStock(productMasterId) {
+  const rows = await db.sql`
+    SELECT pm.*,
+      COALESCE(SUM(wm.quantity), 0)::integer AS movement_quantity,
+      (pm.stock_quantity + COALESCE(SUM(wm.quantity), 0))::integer AS current_stock
+    FROM product_master pm
+    LEFT JOIN warehouse_movements wm
+      ON wm.product_master_id = pm.id
+      OR (pm.woo_product_id IS NOT NULL AND wm.product_id = pm.woo_product_id)
+    WHERE pm.id=${productMasterId}
+    GROUP BY pm.id`;
+  return rows[0] || null;
+}
+
+async function warehouseInventoryAction(user, body) {
+  if (!isAdmin(user)) return json({ error: "Forbidden" }, 403);
+  const action = body.action || "movement";
+  if (!["movement", "stockCount"].includes(action)) return json({ error: "不支援的總倉庫存動作" }, 400);
+  const productMasterId = body.productMasterId || body.product_master_id;
+  if (!productMasterId) return json({ error: "請選擇商品" }, 400);
+  const product = await warehouseProductStock(productMasterId);
+  if (!product) return json({ error: "找不到商品主檔" }, 404);
+
+  const movementType = String(body.movementType || body.type || (action === "stockCount" ? "盤點修正" : "")).trim();
+  const allowedTypes = ["補貨入庫", "領料出庫", "盤點修正"];
+  if (!allowedTypes.includes(movementType)) return json({ error: "請選擇正確的異動類型" }, 400);
+
+  const before = Number(product.current_stock || 0);
+  const rawQty = Math.floor(Math.abs(Number(body.quantity || 0)));
+  const actualQuantity = Math.floor(Number(body.actualQuantity ?? body.actual_quantity ?? before));
+  let delta = 0;
+  if (movementType === "盤點修正") {
+    if (!Number.isFinite(actualQuantity) || actualQuantity < 0) return json({ error: "盤點實際庫存不可小於 0" }, 400);
+    delta = actualQuantity - before;
+  } else {
+    if (!Number.isFinite(rawQty) || rawQty <= 0) return json({ error: "異動數量必須大於 0" }, 400);
+    delta = movementType === "補貨入庫" ? rawQty : -rawQty;
+  }
+  if (delta === 0) return json({ error: "異動數量為 0，無需建立紀錄" }, 400);
+  if (before + delta < 0) return json({ error: `總倉庫存不足，目前只有 ${before} 件` }, 400);
+
+  const after = before + delta;
+  const warehouseName = String(body.warehouseName || body.warehouse_name || "東瑭主倉").trim() || "東瑭主倉";
+  const note = String(body.note || "").trim();
+  const reason = String(body.reason || movementType).trim();
+  const sourceType = action === "stockCount" ? "stock_count" : "manual";
+  let sourceId = String(body.sourceId || "").trim();
+  let stockCount = null;
+
+  if (action === "stockCount") {
+    const countNo = `SC-${new Date().toISOString().slice(0, 10).replaceAll("-", "")}-${String(Date.now()).slice(-5)}`;
+    const counts = await db.sql`
+      INSERT INTO warehouse_stock_counts (count_no, warehouse_name, status, note, operator_email)
+      VALUES (${countNo}, ${warehouseName}, '已確認', ${note}, ${user.email})
+      RETURNING *`;
+    stockCount = counts[0];
+    sourceId = stockCount.count_no;
+    await db.sql`
+      INSERT INTO warehouse_stock_count_items
+        (stock_count_id, product_master_id, product_id, item_no, product_name, book_quantity, actual_quantity, difference, note)
+      VALUES (${stockCount.id}, ${product.id}, ${product.woo_product_id}, ${product.item_no}, ${product.name},
+        ${before}, ${after}, ${delta}, ${note})`;
+  } else if (!sourceId) {
+    sourceId = `WH-${Date.now()}`;
+  }
+
+  const idempotencyKey = `${sourceType}:${sourceId}:${product.id}:${delta}:${Date.now()}`;
+  const rows = await db.sql`
+    INSERT INTO warehouse_movements
+      (warehouse_name, dealer_id, product_id, product_master_id, movement_type, quantity,
+        source_type, source_id, idempotency_key, operator_email, note, movement_before, movement_after, reason)
+    VALUES (${warehouseName}, NULL, ${product.woo_product_id}, ${product.id}, ${movementType}, ${delta},
+      ${sourceType}, ${sourceId}, ${idempotencyKey}, ${user.email}, ${note}, ${before}, ${after}, ${reason})
+    RETURNING *`;
+  return json({ ok: true, movement: rows[0], product: await warehouseProductStock(product.id), stockCount });
 }
 
 async function currentDealerStock(dealerId, productId) {
@@ -1179,6 +1291,8 @@ export default async function handler(req) {
     if (req.method === "POST" && route === "settings" && action === "woocommerce") return saveWooCommerceSettings(user, body);
     if (req.method === "GET" && route === "master-products") return listMasterProducts(user);
     if (req.method === "POST" && route === "master-products") return productMasterAction(user, body);
+    if (req.method === "GET" && route === "warehouse-inventory") return listWarehouseInventory(user);
+    if (req.method === "POST" && route === "warehouse-inventory") return warehouseInventoryAction(user, body);
     if (req.method === "POST" && route === "products" && action === "sync") return syncWooCommerceProducts(user);
     if (req.method === "POST" && route === "products" && action === "update") return updateWooCommerceProduct(user, body);
     if (req.method === "POST" && route === "orders") return createOrder(user, body);

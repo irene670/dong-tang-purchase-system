@@ -1228,6 +1228,7 @@ const masterHeaderMap = {
   "安全存量": "safety_stock",
   "庫存量": "stock_quantity",
   "條碼編號": "barcode",
+  "儲位": "storage_location",
   "單位淨重": "unit_weight",
   "主供應商": "supplier",
   "商品描述": "description"
@@ -1422,13 +1423,192 @@ function ProductMasterManager({ api }) {
           <span><input value={current.category || ""} onChange={e => update(product.id, "category", e.target.value)} /><small>單位：<input value={current.unit || ""} onChange={e => update(product.id, "unit", e.target.value)} /></small></span>
           <span><input type="number" value={current.retail_price || 0} onChange={e => update(product.id, "retail_price", Number(e.target.value))} /><small>優惠 <input type="number" value={current.sale_price || 0} onChange={e => update(product.id, "sale_price", Number(e.target.value))} /></small></span>
           <span><input type="number" value={current.stock_quantity || 0} onChange={e => update(product.id, "stock_quantity", Number(e.target.value))} /><small>安全 <input type="number" value={current.safety_stock || 0} onChange={e => update(product.id, "safety_stock", Number(e.target.value))} /></small></span>
-          <span><input value={current.barcode || ""} onChange={e => update(product.id, "barcode", e.target.value)} /><small><input value={current.supplier || ""} onChange={e => update(product.id, "supplier", e.target.value)} placeholder="主供應商" /></small></span>
+          <span><input value={current.barcode || ""} onChange={e => update(product.id, "barcode", e.target.value)} placeholder="條碼" /><small><input value={current.storage_location || ""} onChange={e => update(product.id, "storage_location", e.target.value)} placeholder="總倉儲位" /></small><small><input value={current.supplier || ""} onChange={e => update(product.id, "supplier", e.target.value)} placeholder="主供應商" /></small></span>
           <span>{current.woo_product_id ? <><b>#{current.woo_product_id}</b>{current.woo_permalink && <a href={current.woo_permalink} target="_blank" rel="noreferrer">查看官網</a>}</> : <em>未對應</em>}</span>
           <span><button className="primary" disabled={saving || !editMap[product.id]} onClick={() => saveRow(product)}><Save /> 儲存</button></span>
         </div>;
       })}
       {!filtered.length && <div className="woo-empty">沒有符合條件的商品主檔</div>}
     </div>
+  </div>;
+}
+
+function WarehouseStockManager({ api, focus = {} }) {
+  const [products, setProducts] = useState([]);
+  const [movements, setMovements] = useState([]);
+  const [stockCounts, setStockCounts] = useState([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState(focus.filter || "all");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({ movementType: "補貨入庫", quantity: 1, actualQuantity: 0, note: "" });
+
+  useEffect(() => { load(); }, []);
+
+  async function load(nextSelectedId = selectedId) {
+    setLoading(true);
+    setError("");
+    try {
+      const data = await api("warehouse-inventory");
+      const rows = Array.isArray(data.products) ? data.products : [];
+      setProducts(rows);
+      setMovements(Array.isArray(data.movements) ? data.movements : []);
+      setStockCounts(Array.isArray(data.stockCounts) ? data.stockCounts : []);
+      const nextId = nextSelectedId && rows.some(row => row.id === nextSelectedId) ? nextSelectedId : rows[0]?.id || "";
+      setSelectedId(nextId);
+      const selected = rows.find(row => row.id === nextId);
+      if (selected) setForm(prev => ({ ...prev, actualQuantity: Number(selected.current_stock || 0) }));
+    } catch (err) {
+      setError(err.message || "總倉庫存載入失敗");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  const selected = products.find(row => row.id === selectedId);
+  const visibleProducts = products.filter(product => {
+    const currentStock = Number(product.current_stock || 0);
+    const safetyStock = Number(product.safety_stock || 0);
+    const haystack = `${product.item_no} ${product.name} ${product.category} ${product.barcode} ${product.supplier} ${product.storage_location}`.toLowerCase();
+    const matchesQuery = !query || haystack.includes(query.toLowerCase());
+    const matchesFilter = filter === "all"
+      || (filter === "low" && currentStock > 0 && safetyStock > 0 && currentStock <= safetyStock)
+      || (filter === "out" && currentStock <= 0)
+      || (filter === "active" && product.active)
+      || (filter === "visible" && product.dealer_visible);
+    return matchesQuery && matchesFilter;
+  });
+  const totalStock = products.reduce((sum, product) => sum + Number(product.current_stock || 0), 0);
+  const lowStock = products.filter(product => Number(product.current_stock || 0) > 0 && Number(product.safety_stock || 0) > 0 && Number(product.current_stock || 0) <= Number(product.safety_stock || 0));
+  const outStock = products.filter(product => Number(product.current_stock || 0) <= 0);
+  const todayKey = new Date().toISOString().slice(0, 10);
+  const todayMovements = movements.filter(row => String(row.created_at || "").slice(0, 10) === todayKey);
+  const selectedMovements = selected ? movements.filter(row => row.product_master_id === selected.id || Number(row.product_id) === Number(selected.woo_product_id)).slice(0, 12) : [];
+  const suggestedReplenish = selected ? Math.max(0, Number(selected.safety_stock || 0) - Number(selected.current_stock || 0)) : 0;
+
+  function chooseProduct(id) {
+    const product = products.find(row => row.id === id);
+    setSelectedId(id);
+    setForm(prev => ({ ...prev, actualQuantity: Number(product?.current_stock || 0), quantity: 1 }));
+  }
+
+  async function submitMovement(action = "movement") {
+    if (!selected) return;
+    setSaving(true);
+    setError("");
+    setMessage("");
+    try {
+      const payload = {
+        action,
+        productMasterId: selected.id,
+        movementType: form.movementType,
+        quantity: Number(form.quantity || 0),
+        actualQuantity: Number(form.actualQuantity || 0),
+        note: form.note
+      };
+      await api("warehouse-inventory", { method: "POST", body: JSON.stringify(payload) });
+      setMessage(`${selected.item_no}｜${selected.name} 已建立 ${form.movementType} 紀錄。`);
+      setForm(prev => ({ ...prev, quantity: 1, note: "" }));
+      await load(selected.id);
+    } catch (err) {
+      setError(err.message || "庫存異動失敗");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) return <div className="woo-loading"><RefreshCw className="spin-icon" /> 正在載入總倉庫存...</div>;
+
+  return <div className="warehouse-stock-admin">
+    <div className="warehouse-hero">
+      <div><span className="eyebrow">WAREHOUSE CONTROL</span><h2>總倉庫存管理</h2><p>商品資料庫就是總倉主檔；這裡負責補貨入庫、領料出庫、盤點修正與低庫存追蹤。</p></div>
+      <button className="outline" onClick={() => load(selectedId)} disabled={saving}><RefreshCw /> 重新整理</button>
+    </div>
+    <div className="warehouse-kpis">
+      <button onClick={() => setFilter("all")}><PackageCheck /><span>總庫存量</span><strong>{totalStock.toLocaleString("zh-TW")}</strong><small>{products.length} 種商品</small></button>
+      <button onClick={() => setFilter("low")}><Clock3 /><span>低庫存警示</span><strong>{lowStock.length}</strong><small>低於或等於安全庫存</small></button>
+      <button onClick={() => setFilter("out")}><Truck /><span>缺貨項目</span><strong>{outStock.length}</strong><small>庫存小於等於 0</small></button>
+      <button><History /><span>今日異動</span><strong>{todayMovements.length}</strong><small>補貨、出庫、盤點</small></button>
+    </div>
+    {message && <div className="woo-sync-message">{message}</div>}
+    {error && <div className="woo-error">❌ {error}</div>}
+    <div className="warehouse-layout">
+      <section className="warehouse-list-card">
+        <div className="warehouse-toolbar">
+          <div className="woo-search"><Search size={16} /><input placeholder="搜尋品號、品名、分類、條碼、供應商、儲位..." value={query} onChange={e => setQuery(e.target.value)} /></div>
+          <div className="woo-filters">
+            {[["all", "全部"], ["low", "低庫存"], ["out", "缺貨"], ["active", "啟用"], ["visible", "經銷商可見"]].map(([value, label]) => <button key={value} className={filter === value ? "active" : ""} onClick={() => setFilter(value)}>{label}</button>)}
+          </div>
+        </div>
+        <div className="warehouse-table">
+          <div className="warehouse-table-head"><span>品號</span><span>品名</span><span>分類／儲位</span><span>安全庫存</span><span>目前庫存</span><span>建議補貨</span></div>
+          {visibleProducts.map(product => {
+            const currentStock = Number(product.current_stock || 0);
+            const safetyStock = Number(product.safety_stock || 0);
+            const replenish = Math.max(0, safetyStock - currentStock);
+            const statusClass = currentStock <= 0 ? "danger" : replenish > 0 ? "warning" : "ok";
+            return <button className={`warehouse-product-row ${selectedId === product.id ? "active" : ""}`} key={product.id} onClick={() => chooseProduct(product.id)}>
+              <span><strong>{product.item_no}</strong><small>{product.barcode || "無條碼"}</small></span>
+              <span><b>{product.name}</b><small>{product.supplier || "未設定供應商"}</small></span>
+              <span>{product.category || "-"}<small>{product.storage_location || "未設定儲位"}</small></span>
+              <span>{safetyStock}</span>
+              <span className={statusClass}>{currentStock}</span>
+              <span>{replenish > 0 ? replenish : "-"}</span>
+            </button>;
+          })}
+          {!visibleProducts.length && <div className="woo-empty">沒有符合條件的總倉商品</div>}
+        </div>
+      </section>
+      <aside className="warehouse-detail-card">
+        {selected ? <>
+          <div className="warehouse-detail-head">
+            <div><span className="eyebrow">SELECTED ITEM</span><h3>{selected.name}</h3><p>{selected.item_no} · {selected.barcode || "無條碼"}</p></div>
+            <strong className={Number(selected.current_stock || 0) <= 0 ? "danger" : suggestedReplenish > 0 ? "warning" : "ok"}>{Number(selected.current_stock || 0)}</strong>
+          </div>
+          <div className="warehouse-info-grid">
+            <span>分類<b>{selected.category || "-"}</b></span>
+            <span>儲位<b>{selected.storage_location || "未設定"}</b></span>
+            <span>安全庫存<b>{selected.safety_stock || 0}</b></span>
+            <span>建議補貨<b>{suggestedReplenish || "-"}</b></span>
+            <span>零售價<b>{money(selected.retail_price || 0)}</b></span>
+            <span>經銷價<b>{money(selected.sale_price || 0)}</b></span>
+          </div>
+          <div className="warehouse-action-box">
+            <h4>庫存異動</h4>
+            <label>異動類型<select value={form.movementType} onChange={e => setForm({ ...form, movementType: e.target.value, actualQuantity: Number(selected.current_stock || 0) })}><option>補貨入庫</option><option>領料出庫</option><option>盤點修正</option></select></label>
+            {form.movementType === "盤點修正"
+              ? <label>盤點後實際庫存<input type="number" min="0" value={form.actualQuantity} onChange={e => setForm({ ...form, actualQuantity: e.target.value })} /></label>
+              : <label>異動數量<input type="number" min="1" value={form.quantity} onChange={e => setForm({ ...form, quantity: e.target.value })} /></label>}
+            <label>備註<textarea value={form.note} onChange={e => setForm({ ...form, note: e.target.value })} placeholder="例如：廠商進貨、訂單出庫、盤差原因..." /></label>
+            <div className="warehouse-action-buttons">
+              <button className="primary" disabled={saving} onClick={() => submitMovement(form.movementType === "盤點修正" ? "stockCount" : "movement")}><Save /> {saving ? "處理中..." : "確認異動"}</button>
+            </div>
+          </div>
+          <div className="warehouse-history">
+            <h4>此商品最近異動</h4>
+            {selectedMovements.length ? selectedMovements.map(row => <div key={row.id} className="warehouse-history-row"><span><b className={Number(row.quantity) < 0 ? "danger" : "ok"}>{Number(row.quantity) > 0 ? "+" : ""}{row.quantity}</b>{row.movement_type}</span><small>{new Date(row.created_at).toLocaleString("zh-TW")} · {row.operator_email || "-"}<br />{row.note || row.reason || ""}</small></div>) : <div className="document-empty compact">尚無異動紀錄</div>}
+          </div>
+        </> : <div className="document-empty compact">請先選擇商品</div>}
+      </aside>
+    </div>
+    <section className="warehouse-bottom-grid">
+      <div>
+        <div className="panel-title"><h3>最近總倉異動</h3><span>{movements.length} 筆</span></div>
+        <div className="warehouse-movement-list">
+          {movements.slice(0, 12).map(row => <div key={row.id} className="warehouse-movement-row"><span><strong>{row.item_no || row.product_id || "-"}</strong><small>{row.product_name || "未對應商品主檔"}</small></span><b className={Number(row.quantity) < 0 ? "danger" : "ok"}>{Number(row.quantity) > 0 ? "+" : ""}{row.quantity}</b><span>{row.movement_type}</span><small>{new Date(row.created_at).toLocaleString("zh-TW")}<br />{row.operator_email || "-"}</small></div>)}
+        </div>
+      </div>
+      <div>
+        <div className="panel-title"><h3>盤點紀錄</h3><span>{stockCounts.length} 筆</span></div>
+        <div className="warehouse-movement-list">
+          {stockCounts.slice(0, 8).map(row => <div key={row.id} className="warehouse-movement-row"><span><strong>{row.count_no}</strong><small>{row.warehouse_name}</small></span><b>{row.item_count}</b><span>差異 {row.total_difference}</span><small>{new Date(row.created_at).toLocaleString("zh-TW")}<br />{row.operator_email || "-"}</small></div>)}
+          {!stockCounts.length && <div className="document-empty compact">尚無盤點紀錄</div>}
+        </div>
+      </div>
+    </section>
   </div>;
 }
 
@@ -1843,7 +2023,7 @@ function AdminDashboard({ orders, transfers, reports, sales, movements, products
       <button onClick={() => onGo("orders", { status: "待處理", id: pendingOrders[0]?.id })}><ClipboardCheck /><span>待處理採購單</span><strong>{pendingOrders.length}</strong><small>確認、改數量、列印報價或轉調撥</small></button>
       <button onClick={() => onGo("transfers", { status: "草稿", id: readyTransfers[0]?.id })}><Truck /><span>待調撥單</span><strong>{readyTransfers.length}</strong><small>確認調撥與主倉出庫</small></button>
       <button onClick={() => onGo("reports", { status: "待審核", id: pendingReports[0]?.id })}><FileText /><span>寄售回報待審</span><strong>{pendingReports.length}</strong><small>{approvedReports.length} 筆已審核待轉銷貨單</small></button>
-      <button onClick={() => onGo("inventory")}><Warehouse /><span>低庫存品項</span><strong>{lowStockRows.length}</strong><small>查看經銷商寄售庫存水位</small></button>
+      <button onClick={() => onGo("warehouseStock", { filter: "low" })}><Warehouse /><span>總倉庫存管理</span><strong>進入</strong><small>查看總倉補貨與控庫存</small></button>
       <button onClick={() => onGo("sales")}><Database /><span>本月銷貨金額</span><strong>{money(monthSales)}</strong><small>查看銷貨單與請款資料</small></button>
       <button onClick={() => onGo("accounts")}><UserRound /><span>經銷商帳號</span><strong>{dealers.length}</strong><small>管理帳號、模式與門市資料</small></button>
     </div>
@@ -1890,6 +2070,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
         <button className={tab === "import" ? "active" : ""} onClick={() => goTab("import")}><Upload /> Excel 正式銷貨單</button>
         <span>商品與庫存</span>
         <button className={tab === "masterProducts" ? "active" : ""} onClick={() => goTab("masterProducts")}><Database /> 商品資料庫</button>
+        <button className={tab === "warehouseStock" ? "active" : ""} onClick={() => goTab("warehouseStock")}><Warehouse /> 總倉庫存</button>
         <button className={tab === "products" ? "active" : ""} onClick={() => goTab("products")}><ShoppingBag /> 官網商品同步</button>
         <button className={tab === "inventory" ? "active" : ""} onClick={() => goTab("inventory")}><Warehouse /> 寄售庫存</button>
         <button className={tab === "adjust" ? "active" : ""} onClick={() => goTab("adjust")}><SlidersHorizontal /> 盤點修正</button>
@@ -1916,7 +2097,7 @@ function AdminPanel({ api, content, products, productEdits, channels, dealers, o
           <h2>展示架申請</h2>
           <AdminField label="區塊標題" value={draft.displayTitle} onChange={v => setDraft({ ...draft, displayTitle: v })} />
           <AdminField label="申請說明" value={draft.displayText} onChange={v => setDraft({ ...draft, displayText: v })} area />
-        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
+        </div> : tab === "accounts" ? <DealerAccountManager dealers={dealers} onCreate={onCreateDealerAccount} /> : tab === "orders" ? <OrderManager orders={orders} dealers={dealers} transfers={transfers} products={products} focus={focus} onUpdate={onUpdateOrder} onCreateTransfer={onCreateTransfer} /> : tab === "transfers" ? <TransferWarehouseManager transfers={transfers} warehouseMovements={warehouseMovements} products={products} focus={focus} onUpdateTransfer={onUpdateTransfer} /> : tab === "masterProducts" ? <ProductMasterManager api={api} /> : tab === "warehouseStock" ? <WarehouseStockManager api={api} focus={focus} /> : tab === "products" ? <WooProductManager api={api} /> : tab === "channels" ? <ChannelManager channels={channelDraft} onChange={setChannelDraft} /> : tab === "inventory" ? <InventoryOverview channels={channelDraft} products={products} movements={movements} /> : tab === "reports" ? <ConsignmentReportAdmin reports={consignmentReports} movements={movements} focus={focus} onReview={onReviewConsignmentReport} onConvert={onConvertConsignmentReport} /> : tab === "sales" ? <SalesManager channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "import" ? <FormalSalesImport channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : tab === "adjust" ? <StockAdjustment channels={channelDraft} products={products} movements={movements} sales={sales} onSave={onSaveInventory} /> : <MovementHistory products={products} movements={movements} />}
       </section>
     </div>
   </main>;
